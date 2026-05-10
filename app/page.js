@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { db } from "./firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+
 import { 
   BookOpen, Calendar as CalendarIcon, Home, Search, Shield, User, 
   LogOut, Moon, Sun, CheckSquare, Clock, AlertCircle, Edit3, 
@@ -96,6 +99,52 @@ const SmoothTextarea = ({ value, onChange, placeholder, className }) => {
 // 3. MAIN APP COMPONENT
 // ==========================================
 export default function HomeworkTracker() {
+
+  const DEFAULT_USERS = [
+  {
+    id: 'u1',
+    username: 'Yupparaj',
+    password: 'admin m.2/10',
+    name: 'Yupparaj',
+    role: 'admin',
+    points: 0,
+    badges: [],
+    praises: [],
+    status: 'offline',
+    lastLogin: '-',
+    isLocked: false,
+    forcePwd: false
+  },
+  {
+    id: 'u2',
+    username: 'writer1',
+    password: 'password',
+    name: 'กุลรดา (คนจด)',
+    role: 'writer',
+    points: 15,
+    badges: ['⚡ อัปเดตไวที่สุด'],
+    praises: ['⭐ จดละเอียดมาก'],
+    status: 'offline',
+    lastLogin: '-',
+    isLocked: false,
+    forcePwd: false
+  },
+  {
+    id: 'u3',
+    username: 'writer2',
+    password: 'password',
+    name: 'สมชาย (คนจด)',
+    role: 'writer',
+    points: 5,
+    badges: [],
+    praises: [],
+    status: 'offline',
+    lastLogin: '-',
+    isLocked: false,
+    forcePwd: false
+  }
+];
+
   const [users, setUsers] = useState([
     { id: 'u1', username: 'Yupparaj', password: 'admin m.2/10', name: 'Yupparaj', role: 'admin', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
     { id: 'u2', username: 'writer1', password: 'password', name: 'กุลรดา (คนจด)', role: 'writer', points: 15, badges: ['⚡ อัปเดตไวที่สุด'], praises: ['⭐ จดละเอียดมาก'], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
@@ -115,16 +164,54 @@ export default function HomeworkTracker() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
+useEffect(() => {
+  const initialize = async () => {
     const todayInfo = getThaiDateInfo();
+
     setSelectedDateStr(todayInfo.dateStr);
     setSelectedDayOfWeek(todayInfo.dayOfWeek);
     setIsMounted(true);
 
-    if (!records[todayInfo.dateStr]) {
-      setRecords(prev => ({ ...prev, [todayInfo.dateStr]: { note: '', subjects: {} } }));
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+
+        setUsers(data.users || DEFAULT_USERS);
+        setRecords(data.records || {});
+        setLogs(data.logs || []);
+      } else {
+        const starterData = {
+          users: DEFAULT_USERS,
+          records: {},
+          logs: []
+        };
+
+        await setDoc(docRef, starterData);
+
+        setUsers(DEFAULT_USERS);
+        setRecords({});
+        setLogs([]);
+      }
+
+      setRecords(prev => ({
+        ...prev,
+        [todayInfo.dateStr]:
+          prev[todayInfo.dateStr] || {
+            note: '',
+            subjects: {}
+          }
+      }));
+    } catch (error) {
+      console.error("Firebase load error:", error);
+      alert("โหลดข้อมูลไม่สำเร็จ");
     }
-  }, []);
+  };
+
+  initialize();
+}, []);
 
   const handleLogin = (username, password) => {
     const user = users.find(u => u.username === username && u.password === password);
@@ -472,10 +559,34 @@ export default function HomeworkTracker() {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
-    const handleSave = () => {
-      addLog('บันทึกข้อมูลตารางเรียน', `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`);
-      alert('บันทึกข้อมูลเรียบร้อยแล้ว');
+const handleSave = async () => {
+  try {
+    const newLog = {
+      id: Date.now(),
+      action: 'บันทึกข้อมูลตารางเรียน',
+      detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
+      by: currentUser?.name || 'system',
+      time: new Date().toLocaleString('th-TH', {
+        timeZone: THAI_TIMEZONE
+      })
     };
+
+    const updatedLogs = [newLog, ...logs];
+
+    setLogs(updatedLogs);
+
+    await setDoc(doc(db, "homeworkData", "main"), {
+      users,
+      records,
+      logs: updatedLogs
+    });
+
+    alert("บันทึกข้อมูลลง Firebase สำเร็จ!");
+  } catch (error) {
+    console.error(error);
+    alert("บันทึกข้อมูลไม่สำเร็จ");
+  }
+};
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
