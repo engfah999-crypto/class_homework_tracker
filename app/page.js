@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { db } from "./firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "../lib/firebase"; // ตรวจสอบ path ให้ตรงกับไฟล์ firebase.js ของคุณ
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 
 import { 
   BookOpen, Calendar as CalendarIcon, Home, Search, Shield, User, 
@@ -62,6 +62,12 @@ const DAYS_TH = ['', 'วันจันทร์', 'วันอังคาร
 const BADGES = ['🏆 นักจดการบ้านดีเด่น', '📚 จดละเอียดแห่งสัปดาห์', '⚡ อัปเดตไวที่สุด', '🎯 ส่งครบตรงเวลา'];
 const PRAISES = ['⭐ จดละเอียดมาก', '⭐ ส่งงานตรงเวลา', '⭐ สรุปดี เข้าใจง่าย', '⭐ รับผิดชอบดีมาก', '⭐ ขยันอัปเดตข้อมูล'];
 
+const DEFAULT_USERS = [
+  { id: 'u1', username: 'Yupparaj', password: 'admin m.2/10', name: 'Yupparaj', role: 'admin', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
+  { id: 'u2', username: 'writer1', password: 'password', name: 'กุลรดา (คนจด)', role: 'writer', points: 15, badges: ['⚡ อัปเดตไวที่สุด'], praises: ['⭐ จดละเอียดมาก'], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
+  { id: 'u3', username: 'writer2', password: 'password', name: 'สมชาย (คนจด)', role: 'writer', points: 5, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false }
+];
+
 // ==========================================
 // 2. HELPER FUNCTIONS & COMPONENTS
 // ==========================================
@@ -80,7 +86,7 @@ const formatDateTH = (dateStr) => {
   return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
-// คอมโพเนนต์ Textarea แบบพิมพ์ลื่น (ไม่กระตุก)
+// คอมโพเนนต์ Textarea แบบพิมพ์ลื่น
 const SmoothTextarea = ({ value, onChange, placeholder, className }) => {
   const [localValue, setLocalValue] = useState(value || '');
   useEffect(() => { setLocalValue(value || ''); }, [value]);
@@ -100,56 +106,7 @@ const SmoothTextarea = ({ value, onChange, placeholder, className }) => {
 // ==========================================
 export default function HomeworkTracker() {
 
-  const DEFAULT_USERS = [
-  {
-    id: 'u1',
-    username: 'Yupparaj',
-    password: 'admin m.2/10',
-    name: 'Yupparaj',
-    role: 'admin',
-    points: 0,
-    badges: [],
-    praises: [],
-    status: 'offline',
-    lastLogin: '-',
-    isLocked: false,
-    forcePwd: false
-  },
-  {
-    id: 'u2',
-    username: 'writer1',
-    password: 'password',
-    name: 'กุลรดา (คนจด)',
-    role: 'writer',
-    points: 15,
-    badges: ['⚡ อัปเดตไวที่สุด'],
-    praises: ['⭐ จดละเอียดมาก'],
-    status: 'offline',
-    lastLogin: '-',
-    isLocked: false,
-    forcePwd: false
-  },
-  {
-    id: 'u3',
-    username: 'writer2',
-    password: 'password',
-    name: 'สมชาย (คนจด)',
-    role: 'writer',
-    points: 5,
-    badges: [],
-    praises: [],
-    status: 'offline',
-    lastLogin: '-',
-    isLocked: false,
-    forcePwd: false
-  }
-];
-
-  const [users, setUsers] = useState([
-    { id: 'u1', username: 'Yupparaj', password: 'admin m.2/10', name: 'Yupparaj', role: 'admin', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
-    { id: 'u2', username: 'writer1', password: 'password', name: 'กุลรดา (คนจด)', role: 'writer', points: 15, badges: ['⚡ อัปเดตไวที่สุด'], praises: ['⭐ จดละเอียดมาก'], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
-    { id: 'u3', username: 'writer2', password: 'password', name: 'สมชาย (คนจด)', role: 'writer', points: 5, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false }
-  ]);
+  const [users, setUsers] = useState(DEFAULT_USERS);
   const [records, setRecords] = useState({});
   const [logs, setLogs] = useState([]);
 
@@ -158,60 +115,59 @@ export default function HomeworkTracker() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [currentView, setCurrentView] = useState('login');
   
-  // ใช้ State สำหรับ Date แต่ให้ตั้งค่าเริ่มต้นใน useEffect เพื่อเลี่ยง Hydration Error ใน Next.js
   const [selectedDateStr, setSelectedDateStr] = useState('');
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1);
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-useEffect(() => {
-  const initialize = async () => {
-    const todayInfo = getThaiDateInfo();
+  // ==========================================
+  // ระบบเชื่อมต่อและ Auto-Save Firebase
+  // ==========================================
 
+  // ฟังก์ชันกลางสำหรับบันทึกข้อมูลทุกอย่างขึ้น Firebase
+  const syncToDB = async (dataToUpdate) => {
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await setDoc(docRef, dataToUpdate, { merge: true });
+    } catch (error) {
+      console.error("Firebase Sync Error:", error);
+    }
+  };
+
+  // ดึงข้อมูลแบบ Real-time
+  useEffect(() => {
+    const todayInfo = getThaiDateInfo();
     setSelectedDateStr(todayInfo.dateStr);
     setSelectedDayOfWeek(todayInfo.dayOfWeek);
     setIsMounted(true);
 
-    try {
-      const docRef = doc(db, "homeworkData", "main");
-      const docSnap = await getDoc(docRef);
+    const docRef = doc(db, "homeworkData", "main");
 
+    // ใช้ onSnapshot เพื่อดึงข้อมูลตลอดเวลาที่ใช้งาน (ไม่ต้อง Refresh)
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-
         setUsers(data.users || DEFAULT_USERS);
         setRecords(data.records || {});
         setLogs(data.logs || []);
+        
+        // อัปเดตข้อมูลผู้ใช้ปัจจุบัน (เผื่อโดนให้คะแนนระหว่างออนไลน์)
+        if (currentUser) {
+            const updatedMe = (data.users || []).find(u => u.id === currentUser.id);
+            if (updatedMe) setCurrentUser(updatedMe);
+        }
       } else {
-        const starterData = {
-          users: DEFAULT_USERS,
-          records: {},
-          logs: []
-        };
-
-        await setDoc(docRef, starterData);
-
-        setUsers(DEFAULT_USERS);
-        setRecords({});
-        setLogs([]);
+        // ถ้าฐานข้อมูลว่าง ให้สร้างข้อมูลเริ่มต้น
+        setDoc(docRef, { users: DEFAULT_USERS, records: {}, logs: [] });
       }
+    });
 
-      setRecords(prev => ({
-        ...prev,
-        [todayInfo.dateStr]:
-          prev[todayInfo.dateStr] || {
-            note: '',
-            subjects: {}
-          }
-      }));
-    } catch (error) {
-      console.error("Firebase load error:", error);
-      alert("โหลดข้อมูลไม่สำเร็จ");
-    }
-  };
+    return () => unsubscribe();
+  }, [currentUser?.id]);
 
-  initialize();
-}, []);
+  // ==========================================
+  // ACTIONS (ถูกเชื่อมต่อกับ Firebase แล้ว)
+  // ==========================================
 
   const handleLogin = (username, password) => {
     const user = users.find(u => u.username === username && u.password === password);
@@ -226,7 +182,10 @@ useEffect(() => {
 
   const proceedLogin = (user) => {
     const now = new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE });
-    setUsers(users.map(u => u.id === user.id ? { ...u, status: 'online', lastLogin: now } : u));
+    const newUsers = users.map(u => u.id === user.id ? { ...u, status: 'online', lastLogin: now } : u);
+    
+    syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
+    
     setCurrentUser({ ...user, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
     setPendingPwdUser(null);
@@ -237,7 +196,11 @@ useEffect(() => {
     const newPwd = e.target.newPassword.value;
     const user = pendingPwdUser;
     const now = new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE });
-    setUsers(users.map(u => u.id === user.id ? { ...u, password: newPwd, forcePwd: false, status: 'online', lastLogin: now } : u));
+    
+    const newUsers = users.map(u => u.id === user.id ? { ...u, password: newPwd, forcePwd: false, status: 'online', lastLogin: now } : u);
+    
+    syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
+
     setCurrentUser({ ...user, password: newPwd, forcePwd: false, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
     setPendingPwdUser(null);
@@ -246,23 +209,19 @@ useEffect(() => {
 
   const handleLogout = () => {
     if (currentUser) {
-      setUsers(users.map(u => u.id === currentUser.id ? { ...u, status: 'offline' } : u));
+      const newUsers = users.map(u => u.id === currentUser.id ? { ...u, status: 'offline' } : u);
+      syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
     }
     setCurrentUser(null);
     setCurrentView('login');
   };
 
-  const addLog = (action, detail) => {
-    if (!currentUser) return;
-    setLogs(prev => [{ id: Date.now(), action, detail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prev]);
-  };
-
   const updateRecord = (dateStr, subjectId, field, value) => {
-    setRecords(prev => {
-      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
-      const subjectRecord = dayRecord.subjects[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
-      return { ...prev, [dateStr]: { ...dayRecord, subjects: { ...dayRecord.subjects, [subjectId]: { ...subjectRecord, [field]: value } } } };
-    });
+    const dayRecord = records[dateStr] || { note: '', subjects: {} };
+    const subjectRecord = dayRecord.subjects[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+    
+    const newRecords = { ...records, [dateStr]: { ...dayRecord, subjects: { ...dayRecord.subjects, [subjectId]: { ...subjectRecord, [field]: value } } } };
+    let newLogs = [...logs];
 
     if (currentUser) {
       const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === subjectId);
@@ -275,16 +234,20 @@ useEffect(() => {
       else if(field === 'dueDate') actionDetail = `เลื่อน/เปลี่ยนกำหนดส่งวิชา ${subjName}`;
 
       if (actionDetail) {
-         setLogs(prev => {
-            if(prev.length > 0 && prev[0].detail === actionDetail && prev[0].by === currentUser.name) return prev;
-            return [{ id: Date.now(), action: 'แก้ไขข้อมูลรายวิชา', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prev];
-         });
+         if(!(newLogs.length > 0 && newLogs[0].detail === actionDetail && newLogs[0].by === currentUser.name)) {
+            newLogs = [{ id: Date.now(), action: 'แก้ไขข้อมูลรายวิชา', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...newLogs].slice(0, 50);
+         }
       }
     }
+
+    setRecords(newRecords);
+    syncToDB({ records: newRecords, logs: newLogs }); // ☁️ ซิงค์ขึ้น Cloud อัตโนมัติ!
   };
 
   const updateDailyNote = (dateStr, note) => {
-    setRecords(prev => ({ ...prev, [dateStr]: { ...(prev[dateStr] || { subjects: {} }), note } }));
+    const newRecords = { ...records, [dateStr]: { ...(records[dateStr] || { subjects: {} }), note } };
+    setRecords(newRecords);
+    syncToDB({ records: newRecords }); // ☁️ ซิงค์ขึ้น Cloud
   };
 
   const handleDateOffset = (offset) => {
@@ -302,7 +265,6 @@ useEffect(() => {
   const canEdit = currentUser?.role === 'admin' || currentUser?.role === 'writer';
   const isAdmin = currentUser?.role === 'admin';
 
-  // ป้องกัน Next.js Hydration Mismatch
   if (!isMounted) return null;
 
   // --- VIEWS ---
@@ -559,34 +521,25 @@ useEffect(() => {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
-const handleSave = async () => {
-  try {
-    const newLog = {
-      id: Date.now(),
-      action: 'บันทึกข้อมูลตารางเรียน',
-      detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
-      by: currentUser?.name || 'system',
-      time: new Date().toLocaleString('th-TH', {
-        timeZone: THAI_TIMEZONE
-      })
+    // คงปุ่มบันทึกไว้ให้ผู้ใช้อุ่นใจ แต่จริงๆ ระบบ Auto-save ไปแล้ว
+    const handleSave = async () => {
+      try {
+        const newLog = {
+          id: Date.now(),
+          action: 'บันทึกข้อมูลตารางเรียน',
+          detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
+          by: currentUser?.name || 'system',
+          time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE })
+        };
+        const updatedLogs = [newLog, ...logs].slice(0, 50);
+        
+        await syncToDB({ logs: updatedLogs });
+        alert("ข้อมูลอัปเดตเรียบร้อย! (ระบบมีการบันทึกอัตโนมัติบน Cloud ด้วยครับ)");
+      } catch (error) {
+        console.error(error);
+        alert("บันทึกข้อมูลไม่สำเร็จ");
+      }
     };
-
-    const updatedLogs = [newLog, ...logs];
-
-    setLogs(updatedLogs);
-
-    await setDoc(doc(db, "homeworkData", "main"), {
-      users,
-      records,
-      logs: updatedLogs
-    });
-
-    alert("บันทึกข้อมูลลง Firebase สำเร็จ!");
-  } catch (error) {
-    console.error(error);
-    alert("บันทึกข้อมูลไม่สำเร็จ");
-  }
-};
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -600,7 +553,7 @@ const handleSave = async () => {
 
         <div className="space-y-4">
           {currentSchedule.map((subject, idx) => {
-            const subjectData = currentData.subjects[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+            const subjectData = currentData.subjects?.[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
             return (
               <div key={subject.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
                 <div className="bg-slate-50 dark:bg-slate-700/50 px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-700">
@@ -710,7 +663,7 @@ const handleSave = async () => {
             found.push({ date, subjectName: subjName, topic: sub.topic, hwDetail: sub.hwDetail });
           }
         });
-        if (records[date].note && records[date].note.toLowerCase().includes(term)) {
+        if (records[date]?.note && records[date].note.toLowerCase().includes(term)) {
            found.push({ date, subjectName: 'หมายเหตุประจำวัน', topic: records[date].note, hwDetail: null });
         }
       });
@@ -797,13 +750,23 @@ const handleSave = async () => {
     const handleCustomInput = (userId, field, value) => { setCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [field]: value } })); };
 
     const grantReward = (userId, type, value, points) => {
-      setUsers(users.map(u => {
+      let logAdded = null;
+      const newUsers = users.map(u => {
         if(u.id === userId) {
-          if (type === 'badge' && !u.badges.includes(value)) { addLog('มอบเหรียญรางวัล', `มอบเหรียญ "${value}" ให้กับ ${u.name}`); return { ...u, badges: [...u.badges, value], points: u.points + points }; }
-          if (type === 'praise' && !u.praises.includes(value)) { addLog('ชื่นชมผลงาน', `ชื่นชม "${value}" ให้กับ ${u.name}`); return { ...u, praises: [...u.praises, value], points: u.points + points }; }
+          if (type === 'badge' && !u.badges.includes(value)) { 
+             logAdded = { id: Date.now(), action: 'มอบเหรียญรางวัล', detail: `มอบเหรียญ "${value}" ให้กับ ${u.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+             return { ...u, badges: [...u.badges, value], points: u.points + points }; 
+          }
+          if (type === 'praise' && !u.praises.includes(value)) { 
+             logAdded = { id: Date.now(), action: 'ชื่นชมผลงาน', detail: `ชื่นชม "${value}" ให้กับ ${u.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+             return { ...u, praises: [...u.praises, value], points: u.points + points }; 
+          }
         }
         return u;
-      }));
+      });
+      const newLogs = logAdded ? [logAdded, ...logs].slice(0, 50) : logs;
+      
+      syncToDB({ users: newUsers, logs: newLogs }); // ☁️ ซิงค์
       setCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [type]: '' } }));
     };
 
@@ -811,28 +774,47 @@ const handleSave = async () => {
       e.preventDefault();
       if (users.find(u => u.username === formData.username)) { alert('Username นี้มีในระบบแล้ว กรุณาใช้ชื่ออื่น'); return; }
       const newUser = { id: 'u' + Date.now(), username: formData.username, password: formData.password, name: formData.name, role: 'writer', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false };
-      setUsers([...users, newUser]); addLog('เพิ่มผู้ใช้งาน', `เพิ่มบัญชีคนจดการบ้าน: ${formData.name}`); setShowAddForm(false); setFormData({ username: '', password: '', name: '' });
+      
+      const newUsers = [...users, newUser];
+      const newLog = { id: Date.now(), action: 'เพิ่มผู้ใช้งาน', detail: `เพิ่มบัญชีคนจดการบ้าน: ${formData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+      
+      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+      setShowAddForm(false); setFormData({ username: '', password: '', name: '' });
     };
 
     const handleUpdateUser = (e) => {
       e.preventDefault();
-      setUsers(users.map(u => u.id === editUserId ? { ...u, name: formData.name, username: formData.username, password: formData.password } : u));
-      addLog('แก้ไขผู้ใช้งาน', `แก้ไขข้อมูลคนจดการบ้าน: ${formData.name}`); setEditUserId(null); setFormData({ username: '', password: '', name: '' });
+      const newUsers = users.map(u => u.id === editUserId ? { ...u, name: formData.name, username: formData.username, password: formData.password } : u);
+      const newLog = { id: Date.now(), action: 'แก้ไขผู้ใช้งาน', detail: `แก้ไขข้อมูลคนจดการบ้าน: ${formData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+      
+      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+      setEditUserId(null); setFormData({ username: '', password: '', name: '' });
     };
 
     const handleDeleteUser = (id, name) => {
-      if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบบัญชี "${name}"?`)) { setUsers(users.filter(u => u.id !== id)); addLog('ลบผู้ใช้งาน', `ลบบัญชีคนจดการบ้าน: ${name}`); }
+      if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบบัญชี "${name}"?`)) { 
+        const newUsers = users.filter(u => u.id !== id);
+        const newLog = { id: Date.now(), action: 'ลบผู้ใช้งาน', detail: `ลบบัญชีคนจดการบ้าน: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+      }
     };
 
     const handleResetLogin = (id, name) => {
       if (window.confirm(`รีเซ็ตรหัสผ่านของ "${name}" เป็น "password" และบังคับเปลี่ยนรหัสใหม่ในการเข้าสู่ระบบครั้งหน้า?`)) {
-        setUsers(users.map(u => u.id === id ? { ...u, password: 'password', forcePwd: true } : u)); addLog('รีเซ็ตรหัสผ่าน', `รีเซ็ตรหัสผ่านบัญชี: ${name}`); alert('รีเซ็ตสำเร็จ รหัสผ่านชั่วคราวคือ: password');
+        const newUsers = users.map(u => u.id === id ? { ...u, password: 'password', forcePwd: true } : u);
+        const newLog = { id: Date.now(), action: 'รีเซ็ตรหัสผ่าน', detail: `รีเซ็ตรหัสผ่านบัญชี: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+        alert('รีเซ็ตสำเร็จ รหัสผ่านชั่วคราวคือ: password');
       }
     };
 
     const handleToggleLock = (id, name, isLocked) => {
       const action = isLocked ? 'ปลดล็อก' : 'ล็อก';
-      if (window.confirm(`ต้องการ${action}บัญชี "${name}" ใช่หรือไม่?`)) { setUsers(users.map(u => u.id === id ? { ...u, isLocked: !isLocked } : u)); addLog(`${action}บัญชี`, `${action}บัญชีคนจดการบ้าน: ${name}`); }
+      if (window.confirm(`ต้องการ${action}บัญชี "${name}" ใช่หรือไม่?`)) { 
+        const newUsers = users.map(u => u.id === id ? { ...u, isLocked: !isLocked } : u);
+        const newLog = { id: Date.now(), action: `${action}บัญชี`, detail: `${action}บัญชีคนจดการบ้าน: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+      }
     };
 
     return (
@@ -892,19 +874,19 @@ const handleSave = async () => {
                   </div>
                   <div className="space-y-4">
                     <div>
-                      <p className="text-xs font-bold uppercase opacity-50 mb-2">เหรียญเกียรติยศ ({user.badges.length})</p>
-                      <div className="flex flex-wrap gap-1.5 mb-2">{user.badges.map((b, i) => <span key={i} className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded border border-slate-200 dark:border-slate-600">{b}</span>)}</div>
+                      <p className="text-xs font-bold uppercase opacity-50 mb-2">เหรียญเกียรติยศ ({(user.badges || []).length})</p>
+                      <div className="flex flex-wrap gap-1.5 mb-2">{(user.badges || []).map((b, i) => <span key={i} className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded border border-slate-200 dark:border-slate-600">{b}</span>)}</div>
                       <div className="flex gap-1">
-                        <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'badge', e.target.value, 10); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกให้เหรียญรางวัล...</option>{BADGES.filter(b => !user.badges.includes(b)).map((badge, i) => <option key={i} value={badge}>{badge}</option>)}</select>
+                        <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'badge', e.target.value, 10); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกให้เหรียญรางวัล...</option>{BADGES.filter(b => !(user.badges || []).includes(b)).map((badge, i) => <option key={i} value={badge}>{badge}</option>)}</select>
                         <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={customInputs[user.id]?.badge || ''} onChange={(e) => handleCustomInput(user.id, 'badge', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'badge', e.target.value, 10); }}/>
                         <button onClick={() => {if(customInputs[user.id]?.badge) grantReward(user.id, 'badge', customInputs[user.id].badge, 10);}} className="bg-blue-100 text-blue-600 px-2 rounded hover:bg-blue-200 text-xs font-bold">+</button>
                       </div>
                     </div>
                     <div>
-                      <p className="text-xs font-bold uppercase opacity-50 mb-2">คำชม ({user.praises.length})</p>
-                      <div className="flex flex-wrap gap-1.5 mb-2">{user.praises.map((p, i) => <span key={i} className="text-xs bg-yellow-50 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200 px-2 py-1 rounded border border-yellow-200 dark:border-yellow-900/50">{p}</span>)}</div>
+                      <p className="text-xs font-bold uppercase opacity-50 mb-2">คำชม ({(user.praises || []).length})</p>
+                      <div className="flex flex-wrap gap-1.5 mb-2">{(user.praises || []).map((p, i) => <span key={i} className="text-xs bg-yellow-50 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200 px-2 py-1 rounded border border-yellow-200 dark:border-yellow-900/50">{p}</span>)}</div>
                       <div className="flex gap-1">
-                        <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'praise', e.target.value, 5); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกคำชม...</option>{PRAISES.filter(p => !user.praises.includes(p)).map((p, i) => <option key={i} value={p}>{p}</option>)}</select>
+                        <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'praise', e.target.value, 5); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกคำชม...</option>{PRAISES.filter(p => !(user.praises || []).includes(p)).map((p, i) => <option key={i} value={p}>{p}</option>)}</select>
                         <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={customInputs[user.id]?.praise || ''} onChange={(e) => handleCustomInput(user.id, 'praise', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'praise', e.target.value, 5); }}/>
                         <button onClick={() => {if(customInputs[user.id]?.praise) grantReward(user.id, 'praise', customInputs[user.id].praise, 5);}} className="bg-yellow-100 text-yellow-700 px-2 rounded hover:bg-yellow-200 text-xs font-bold">+</button>
                       </div>
@@ -955,12 +937,12 @@ const handleSave = async () => {
           <p className="text-slate-500 mb-8 relative z-10">ตำแหน่ง: คนจดการบ้านประจำห้อง</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 relative z-10 mb-8">
             <div className="bg-blue-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">คะแนนสะสม</p><p className="text-3xl font-black text-blue-600 dark:text-blue-400">{currentUser.points}</p></div>
-            <div className="bg-purple-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">เหรียญรางวัล</p><p className="text-3xl font-black text-purple-600 dark:text-purple-400">{currentUser.badges.length}</p></div>
-            <div className="bg-yellow-50 dark:bg-slate-700 rounded-2xl p-4 col-span-2 md:col-span-1"><p className="text-sm text-slate-500 font-bold mb-1">คำชมที่ได้รับ</p><p className="text-3xl font-black text-yellow-600 dark:text-yellow-400">{currentUser.praises?.length || 0}</p></div>
+            <div className="bg-purple-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">เหรียญรางวัล</p><p className="text-3xl font-black text-purple-600 dark:text-purple-400">{(currentUser.badges || []).length}</p></div>
+            <div className="bg-yellow-50 dark:bg-slate-700 rounded-2xl p-4 col-span-2 md:col-span-1"><p className="text-sm text-slate-500 font-bold mb-1">คำชมที่ได้รับ</p><p className="text-3xl font-black text-yellow-600 dark:text-yellow-400">{(currentUser.praises || []).length}</p></div>
           </div>
           <div className="text-left relative z-10 space-y-6">
-            <div><h3 className="font-bold mb-3 flex items-center gap-2"><Award className="text-purple-500"/> เหรียญเกียรติยศ</h3><div className="flex flex-wrap gap-2">{currentUser.badges.map((b, i) => (<div key={i} className="flex items-center gap-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-xl text-sm font-medium">{b}</div>))}{currentUser.badges.length === 0 && <p className="text-slate-500 text-sm italic">ยังไม่มีเหรียญรางวัล สู้ๆ นะ!</p>}</div></div>
-            <div><h3 className="font-bold mb-3 flex items-center gap-2"><Star className="text-yellow-500"/> คำชมจากแอดมิน</h3><div className="flex flex-wrap gap-2">{currentUser.praises?.map((p, i) => (<div key={i} className="flex items-center gap-2 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-800/50 px-4 py-2 rounded-xl text-sm font-medium">{p}</div>))}{(!currentUser.praises || currentUser.praises.length === 0) && <p className="text-slate-500 text-sm italic">ยังไม่มีคำชม</p>}</div></div>
+            <div><h3 className="font-bold mb-3 flex items-center gap-2"><Award className="text-purple-500"/> เหรียญเกียรติยศ</h3><div className="flex flex-wrap gap-2">{(currentUser.badges || []).map((b, i) => (<div key={i} className="flex items-center gap-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-xl text-sm font-medium">{b}</div>))}{(!currentUser.badges || currentUser.badges.length === 0) && <p className="text-slate-500 text-sm italic">ยังไม่มีเหรียญรางวัล สู้ๆ นะ!</p>}</div></div>
+            <div><h3 className="font-bold mb-3 flex items-center gap-2"><Star className="text-yellow-500"/> คำชมจากแอดมิน</h3><div className="flex flex-wrap gap-2">{(currentUser.praises || []).map((p, i) => (<div key={i} className="flex items-center gap-2 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-800/50 px-4 py-2 rounded-xl text-sm font-medium">{p}</div>))}{(!currentUser.praises || currentUser.praises.length === 0) && <p className="text-slate-500 text-sm italic">ยังไม่มีคำชม</p>}</div></div>
           </div>
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 p-6">
