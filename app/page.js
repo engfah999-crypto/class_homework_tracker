@@ -63,7 +63,7 @@ const BADGES = ['🏆 นักจดการบ้านดีเด่น', '
 const PRAISES = ['⭐ จดละเอียดมาก', '⭐ ส่งงานตรงเวลา', '⭐ สรุปดี เข้าใจง่าย', '⭐ รับผิดชอบดีมาก', '⭐ ขยันอัปเดตข้อมูล'];
 
 const DEFAULT_USERS = [
-  { id: 'u1', username: 'Yupparaj', password: 'admin m.2/10', name: 'Yupparaj', role: 'admin', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
+  { id: 'u1', username: 'admin', password: 'password@admin', name: 'ผู้ดูแลระบบ', role: 'admin', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
   { id: 'u2', username: 'writer1', password: 'password', name: 'กุลรดา (คนจด)', role: 'writer', points: 15, badges: ['⚡ อัปเดตไวที่สุด'], praises: ['⭐ จดละเอียดมาก'], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false },
   { id: 'u3', username: 'writer2', password: 'password', name: 'สมชาย (คนจด)', role: 'writer', points: 5, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false }
 ];
