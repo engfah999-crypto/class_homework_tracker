@@ -1,11 +1,10 @@
 import { Prompt } from "next/font/google";
 import "./globals.css";
 
-// โหลดฟอนต์ Prompt และตั้งค่าน้ำหนักที่ต้องการ
+// โหลดฟอนต์ Prompt (เอา variable ออก)
 const prompt = Prompt({
   subsets: ["latin", "thai"],
   weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-prompt", // สร้าง CSS Variable
   display: 'swap',
 });
 
@@ -17,8 +16,8 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="th">
-      {/* เรียกใช้ฟอนต์ Prompt ในระดับ Body */}
-      <body className={`${prompt.variable} font-sans antialiased bg-slate-50`}>
+      {/* ใช้ prompt.className ตรงๆ เลย Next.js จะบังคับยัดฟอนต์ Prompt ให้ทุกจุดอัตโนมัติ */}
+      <body className={`${prompt.className} antialiased bg-slate-50 text-slate-800`}>
         {children}
       </body>
     </html>
