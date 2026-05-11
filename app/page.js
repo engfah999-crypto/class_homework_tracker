@@ -86,7 +86,6 @@ const formatDateTH = (dateStr) => {
   return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
-// คอมโพเนนต์ Textarea แบบพิมพ์ลื่น
 const SmoothTextarea = ({ value, onChange, placeholder, className }) => {
   const [localValue, setLocalValue] = useState(value || '');
   useEffect(() => { setLocalValue(value || ''); }, [value]);
@@ -124,7 +123,6 @@ export default function HomeworkTracker() {
   // ระบบเชื่อมต่อและ Auto-Save Firebase
   // ==========================================
 
-  // ฟังก์ชันกลางสำหรับบันทึกข้อมูลทุกอย่างขึ้น Firebase
   const syncToDB = async (dataToUpdate) => {
     try {
       const docRef = doc(db, "homeworkData", "main");
@@ -134,7 +132,6 @@ export default function HomeworkTracker() {
     }
   };
 
-  // ดึงข้อมูลแบบ Real-time
   useEffect(() => {
     const todayInfo = getThaiDateInfo();
     setSelectedDateStr(todayInfo.dateStr);
@@ -143,7 +140,6 @@ export default function HomeworkTracker() {
 
     const docRef = doc(db, "homeworkData", "main");
 
-    // ใช้ onSnapshot เพื่อดึงข้อมูลตลอดเวลาที่ใช้งาน (ไม่ต้อง Refresh)
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -151,13 +147,11 @@ export default function HomeworkTracker() {
         setRecords(data.records || {});
         setLogs(data.logs || []);
         
-        // อัปเดตข้อมูลผู้ใช้ปัจจุบัน (เผื่อโดนให้คะแนนระหว่างออนไลน์)
         if (currentUser) {
             const updatedMe = (data.users || []).find(u => u.id === currentUser.id);
             if (updatedMe) setCurrentUser(updatedMe);
         }
       } else {
-        // ถ้าฐานข้อมูลว่าง ให้สร้างข้อมูลเริ่มต้น
         setDoc(docRef, { users: DEFAULT_USERS, records: {}, logs: [] });
       }
     });
@@ -166,7 +160,7 @@ export default function HomeworkTracker() {
   }, [currentUser?.id]);
 
   // ==========================================
-  // ACTIONS (ถูกเชื่อมต่อกับ Firebase แล้ว)
+  // ACTIONS
   // ==========================================
 
   const handleLogin = (username, password) => {
@@ -184,7 +178,7 @@ export default function HomeworkTracker() {
     const now = new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE });
     const newUsers = users.map(u => u.id === user.id ? { ...u, status: 'online', lastLogin: now } : u);
     
-    syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
+    syncToDB({ users: newUsers }); 
     
     setCurrentUser({ ...user, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
@@ -199,7 +193,7 @@ export default function HomeworkTracker() {
     
     const newUsers = users.map(u => u.id === user.id ? { ...u, password: newPwd, forcePwd: false, status: 'online', lastLogin: now } : u);
     
-    syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
+    syncToDB({ users: newUsers });
 
     setCurrentUser({ ...user, password: newPwd, forcePwd: false, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
@@ -210,10 +204,15 @@ export default function HomeworkTracker() {
   const handleLogout = () => {
     if (currentUser) {
       const newUsers = users.map(u => u.id === currentUser.id ? { ...u, status: 'offline' } : u);
-      syncToDB({ users: newUsers }); // ☁️ ซิงค์ขึ้น Cloud
+      syncToDB({ users: newUsers });
     }
     setCurrentUser(null);
     setCurrentView('login');
+  };
+
+  const addLog = (action, detail) => {
+    if (!currentUser) return;
+    setLogs(prev => [{ id: Date.now(), action, detail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prev]);
   };
 
   const updateRecord = (dateStr, subjectId, field, value) => {
@@ -241,13 +240,13 @@ export default function HomeworkTracker() {
     }
 
     setRecords(newRecords);
-    syncToDB({ records: newRecords, logs: newLogs }); // ☁️ ซิงค์ขึ้น Cloud อัตโนมัติ!
+    syncToDB({ records: newRecords, logs: newLogs }); 
   };
 
   const updateDailyNote = (dateStr, note) => {
     const newRecords = { ...records, [dateStr]: { ...(records[dateStr] || { subjects: {} }), note } };
     setRecords(newRecords);
-    syncToDB({ records: newRecords }); // ☁️ ซิงค์ขึ้น Cloud
+    syncToDB({ records: newRecords }); 
   };
 
   const handleDateOffset = (offset) => {
@@ -319,6 +318,10 @@ export default function HomeworkTracker() {
             <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
               เข้าชมในฐานะนักเรียน (Guest) &rarr;
             </button>
+            {/* เพิ่มเครดิตผู้พัฒนาในหน้าล็อกอิน */}
+            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
+              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
+            </div>
           </div>
         </div>
       </div>
@@ -399,6 +402,13 @@ export default function HomeworkTracker() {
           ) : (
             <button onClick={() => setCurrentView('login')} className="flex items-center gap-3 w-full p-3 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 transition-colors text-sm font-medium"><LogOut size={20} className="rotate-180" /> เข้าสู่ระบบ</button>
           )}
+
+          {/* เพิ่มเครดิตผู้พัฒนาในแถบเมนูด้านซ้าย */}
+          <div className="mt-6 text-center">
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium leading-relaxed">
+              ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์
+            </p>
+          </div>
         </div>
       </nav>
 
@@ -521,7 +531,6 @@ export default function HomeworkTracker() {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
-    // คงปุ่มบันทึกไว้ให้ผู้ใช้อุ่นใจ แต่จริงๆ ระบบ Auto-save ไปแล้ว
     const handleSave = async () => {
       try {
         const newLog = {
@@ -529,12 +538,22 @@ export default function HomeworkTracker() {
           action: 'บันทึกข้อมูลตารางเรียน',
           detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
           by: currentUser?.name || 'system',
-          time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE })
+          time: new Date().toLocaleString('th-TH', {
+            timeZone: THAI_TIMEZONE
+          })
         };
-        const updatedLogs = [newLog, ...logs].slice(0, 50);
-        
-        await syncToDB({ logs: updatedLogs });
-        alert("ข้อมูลอัปเดตเรียบร้อย! (ระบบมีการบันทึกอัตโนมัติบน Cloud ด้วยครับ)");
+
+        const updatedLogs = [newLog, ...logs];
+
+        setLogs(updatedLogs);
+
+        await setDoc(doc(db, "homeworkData", "main"), {
+          users,
+          records,
+          logs: updatedLogs
+        });
+
+        alert("บันทึกข้อมูลลง Firebase สำเร็จ!");
       } catch (error) {
         console.error(error);
         alert("บันทึกข้อมูลไม่สำเร็จ");
@@ -553,7 +572,7 @@ export default function HomeworkTracker() {
 
         <div className="space-y-4">
           {currentSchedule.map((subject, idx) => {
-            const subjectData = currentData.subjects?.[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+            const subjectData = currentData.subjects[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
             return (
               <div key={subject.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
                 <div className="bg-slate-50 dark:bg-slate-700/50 px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-700">
