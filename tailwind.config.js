@@ -7,10 +7,11 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // เพิ่มตรงนี้เข้าไปครับ --------------------------
       fontFamily: {
-        // ให้ Tailwind ใช้ฟอนต์ Prompt เป็นค่าเริ่มต้น
         sans: ['var(--font-prompt)', 'sans-serif'],
       },
+      // ------------------------------------------
     },
   },
   plugins: [],
