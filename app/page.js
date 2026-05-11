@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { db } from "../lib/firebase"; // ตรวจสอบ path ให้ตรงกับไฟล์ firebase.js ของคุณ
+import { db } from "../lib/firebase"; 
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 
 import { 
@@ -86,6 +86,7 @@ const formatDateTH = (dateStr) => {
   return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
+// คอมโพเนนต์ Textarea แบบพิมพ์ลื่น
 const SmoothTextarea = ({ value, onChange, placeholder, className }) => {
   const [localValue, setLocalValue] = useState(value || '');
   useEffect(() => { setLocalValue(value || ''); }, [value]);
@@ -118,6 +119,15 @@ export default function HomeworkTracker() {
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1);
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // States สำหรับหน้าค้นหาและผู้ดูแลระบบ (ย้ายมาไว้ข้างนอกเพื่อแก้ปัญหา Component กระตุก)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  
+  const [adminShowAddForm, setAdminShowAddForm] = useState(false);
+  const [adminEditUserId, setAdminEditUserId] = useState(null);
+  const [adminFormData, setAdminFormData] = useState({ username: '', password: '', name: '' });
+  const [adminCustomInputs, setAdminCustomInputs] = useState({});
 
   // ==========================================
   // ระบบเชื่อมต่อและ Auto-Save Firebase
@@ -160,7 +170,7 @@ export default function HomeworkTracker() {
   }, [currentUser?.id]);
 
   // ==========================================
-  // ACTIONS
+  // ACTIONS (ถูกเชื่อมต่อกับ Firebase แล้ว)
   // ==========================================
 
   const handleLogin = (username, password) => {
@@ -193,7 +203,7 @@ export default function HomeworkTracker() {
     
     const newUsers = users.map(u => u.id === user.id ? { ...u, password: newPwd, forcePwd: false, status: 'online', lastLogin: now } : u);
     
-    syncToDB({ users: newUsers });
+    syncToDB({ users: newUsers }); 
 
     setCurrentUser({ ...user, password: newPwd, forcePwd: false, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
@@ -204,22 +214,17 @@ export default function HomeworkTracker() {
   const handleLogout = () => {
     if (currentUser) {
       const newUsers = users.map(u => u.id === currentUser.id ? { ...u, status: 'offline' } : u);
-      syncToDB({ users: newUsers });
+      syncToDB({ users: newUsers }); 
     }
     setCurrentUser(null);
     setCurrentView('login');
   };
 
-  const addLog = (action, detail) => {
-    if (!currentUser) return;
-    setLogs(prev => [{ id: Date.now(), action, detail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prev]);
-  };
-
   const updateRecord = (dateStr, subjectId, field, value) => {
     const dayRecord = records[dateStr] || { note: '', subjects: {} };
-    const subjectRecord = dayRecord.subjects[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+    const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
     
-    const newRecords = { ...records, [dateStr]: { ...dayRecord, subjects: { ...dayRecord.subjects, [subjectId]: { ...subjectRecord, [field]: value } } } };
+    const newRecords = { ...records, [dateStr]: { ...dayRecord, subjects: { ...(dayRecord.subjects || {}), [subjectId]: { ...subjectRecord, [field]: value } } } };
     let newLogs = [...logs];
 
     if (currentUser) {
@@ -266,69 +271,11 @@ export default function HomeworkTracker() {
 
   if (!isMounted) return null;
 
-  // --- VIEWS ---
-  if (currentView === 'login') {
-    if (pendingPwdUser) {
-      return (
-        <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-          <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-            <div className="text-center mb-6">
-              <Shield className="mx-auto text-orange-500 mb-4" size={48} />
-              <h2 className="text-xl font-bold text-slate-800 dark:text-white">บังคับเปลี่ยนรหัสผ่าน</h2>
-              <p className="text-sm text-slate-500 mt-2">แอดมินได้รีเซ็ตรหัสผ่านของคุณ กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย</p>
-            </div>
-            <form onSubmit={handleForcePasswordChange} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">รหัสผ่านใหม่</label>
-                <input name="newPassword" type="password" required minLength="6" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="อย่างน้อย 6 ตัวอักษร" />
-              </div>
-              <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2.5 rounded-lg transition-colors">บันทึกรหัสผ่านและเข้าสู่ระบบ</button>
-              <button type="button" onClick={() => setPendingPwdUser(null)} className="w-full text-slate-500 hover:underline text-sm mt-2">ยกเลิก</button>
-            </form>
-          </div>
-        </div>
-      );
-    }
+  // ==========================================
+  // RENDER FUNCTIONS (ช่วยแก้ปัญหาการ Scroll กระโดด)
+  // ==========================================
 
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-        <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-          <div className="text-center mb-8">
-            <div className="bg-blue-100 text-blue-600 p-3 rounded-full inline-block mb-4"><BookOpen size={32} /></div>
-            <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">Class Homework Tracker</h1>
-            <p className="text-sm mt-2 opacity-70">ระบบจดการบ้านห้องเรียน 2/10</p>
-          </div>
-          
-          <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.username.value, e.target.password.value); }} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">ชื่อผู้ใช้งาน</label>
-              <input name="username" type="text" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Username" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">รหัสผ่าน</label>
-              <input name="password" type="password" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Password" />
-            </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors">
-              เข้าสู่ระบบ
-            </button>
-          </form>
-          
-          <div className="mt-6 text-center">
-            <p className="text-sm opacity-70 mb-4">หรือ</p>
-            <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
-              เข้าชมในฐานะนักเรียน (Guest) &rarr;
-            </button>
-            {/* เพิ่มเครดิตผู้พัฒนาในหน้าล็อกอิน */}
-            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
-              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const DateNavigator = () => (
+  const renderDateNavigator = () => (
     <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1.5 rounded-xl shadow-sm border border-blue-200 dark:border-blue-900/50 w-full md:w-auto justify-center">
       <button onClick={() => handleDateOffset(-1)} className="p-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 rounded-lg text-blue-600 dark:text-blue-400 transition-colors"><ChevronLeft size={20} /></button>
       <div className="flex items-center gap-2 px-2">
@@ -352,7 +299,7 @@ export default function HomeworkTracker() {
     </div>
   );
 
-  const Layout = ({ children }) => (
+  const renderLayout = (childrenContent) => (
     <div className={`min-h-screen flex flex-col md:flex-row ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200`}>
       <div className={`md:hidden flex items-center justify-between p-4 shadow-sm z-20 sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
         <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-bold text-lg"><BookOpen size={24} /> <span>2/10 Tracker</span></div>
@@ -403,7 +350,7 @@ export default function HomeworkTracker() {
             <button onClick={() => setCurrentView('login')} className="flex items-center gap-3 w-full p-3 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 transition-colors text-sm font-medium"><LogOut size={20} className="rotate-180" /> เข้าสู่ระบบ</button>
           )}
 
-          {/* เพิ่มเครดิตผู้พัฒนาในแถบเมนูด้านซ้าย */}
+          {/* เครดิตผู้พัฒนาในแถบเมนู */}
           <div className="mt-6 text-center">
             <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium leading-relaxed">
               ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์
@@ -414,13 +361,13 @@ export default function HomeworkTracker() {
 
       <main className="flex-1 max-h-screen overflow-y-auto p-4 md:p-8 relative">
         <div className="max-w-5xl mx-auto pb-20 md:pb-0">
-          {children}
+          {childrenContent}
         </div>
       </main>
     </div>
   );
 
-  const DashboardView = () => {
+  const renderDashboardView = () => {
     const todayInfo = getThaiDateInfo();
     const displayDateStr = selectedDateStr;
     const todayData = records[displayDateStr] || { subjects: {} };
@@ -428,7 +375,7 @@ export default function HomeworkTracker() {
 
     const allUpcoming = [];
     Object.keys(records).forEach(date => {
-      Object.entries(records[date].subjects).forEach(([id, sub]) => {
+      Object.entries(records[date].subjects || {}).forEach(([id, sub]) => {
         if (sub.hasDue && sub.dueDate) {
           const due = new Date(sub.dueDate);
           const now = new Date(todayInfo.dateStr);
@@ -449,7 +396,7 @@ export default function HomeworkTracker() {
             <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">หน้าแรก</h1>
             <p className="text-slate-500 dark:text-slate-400">ข้อมูลของวันที่: {formatDateTH(displayDateStr)}</p>
           </div>
-          <DateNavigator />
+          {renderDateNavigator()}
         </header>
 
         {allUpcoming.filter(h => h.diffDays <= 2).length > 0 && (
@@ -474,7 +421,7 @@ export default function HomeworkTracker() {
             ) : (
               <div className="space-y-3">
                 {todaySchedule.map((sub, idx) => {
-                  const data = todayData.subjects[sub.id];
+                  const data = todayData.subjects?.[sub.id];
                   return (
                     <div key={idx} className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg flex items-start gap-3">
                       <div className="bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300 w-8 h-8 rounded flex items-center justify-center font-bold text-sm flex-shrink-0">{idx + 1}</div>
@@ -527,7 +474,7 @@ export default function HomeworkTracker() {
     );
   };
 
-  const TimetableView = () => {
+  const renderTimetableView = () => {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
@@ -538,22 +485,12 @@ export default function HomeworkTracker() {
           action: 'บันทึกข้อมูลตารางเรียน',
           detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
           by: currentUser?.name || 'system',
-          time: new Date().toLocaleString('th-TH', {
-            timeZone: THAI_TIMEZONE
-          })
+          time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE })
         };
-
-        const updatedLogs = [newLog, ...logs];
-
-        setLogs(updatedLogs);
-
-        await setDoc(doc(db, "homeworkData", "main"), {
-          users,
-          records,
-          logs: updatedLogs
-        });
-
-        alert("บันทึกข้อมูลลง Firebase สำเร็จ!");
+        const updatedLogs = [newLog, ...logs].slice(0, 50);
+        
+        await syncToDB({ logs: updatedLogs });
+        alert("ข้อมูลอัปเดตเรียบร้อย! (ระบบมีการบันทึกอัตโนมัติบน Cloud ด้วยครับ)");
       } catch (error) {
         console.error(error);
         alert("บันทึกข้อมูลไม่สำเร็จ");
@@ -567,12 +504,12 @@ export default function HomeworkTracker() {
             <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">ตารางเรียน & การบ้าน</h1>
             <p className="text-slate-500 dark:text-slate-400">ดูและจัดการข้อมูลของแต่ละวัน</p>
           </div>
-          <DateNavigator />
+          {renderDateNavigator()}
         </header>
 
         <div className="space-y-4">
           {currentSchedule.map((subject, idx) => {
-            const subjectData = currentData.subjects[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+            const subjectData = currentData.subjects?.[subject.id] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
             return (
               <div key={subject.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
                 <div className="bg-slate-50 dark:bg-slate-700/50 px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-700">
@@ -605,9 +542,9 @@ export default function HomeworkTracker() {
                     <div className="bg-orange-50/50 dark:bg-orange-900/10 p-4 rounded-lg border border-orange-100 dark:border-orange-900/30 h-full">
                       <div className="flex items-center gap-2 mb-3">
                         {canEdit ? (
-                          <input type="checkbox" id={`hw-${subject.id}`} className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500" checked={subjectData.hasHw} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasHw', e.target.checked)} />
+                          <input type="checkbox" className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 cursor-pointer" checked={subjectData.hasHw} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasHw', e.target.checked)} />
                         ) : ( subjectData.hasHw && <CheckSquare size={16} className="text-orange-600" /> )}
-                        <label htmlFor={`hw-${subject.id}`} className="font-bold text-sm text-orange-800 dark:text-orange-300">มีการบ้าน / ชิ้นงาน</label>
+                        <label className="font-bold text-sm text-orange-800 dark:text-orange-300">มีการบ้าน / ชิ้นงาน</label>
                       </div>
 
                       {subjectData.hasHw && (
@@ -623,15 +560,15 @@ export default function HomeworkTracker() {
 
                           <div className="flex items-center gap-2 pt-2">
                             {canEdit ? (
-                              <input type="checkbox" id={`due-${subject.id}`} className="w-4 h-4 text-red-600 rounded focus:ring-red-500" checked={subjectData.hasDue} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasDue', e.target.checked)} />
+                              <input type="checkbox" className="w-4 h-4 text-red-600 rounded focus:ring-red-500 cursor-pointer" checked={subjectData.hasDue} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasDue', e.target.checked)} />
                             ) : ( subjectData.hasDue && <Clock size={16} className="text-red-500" /> )}
-                            <label htmlFor={`due-${subject.id}`} className="font-medium text-sm text-red-700 dark:text-red-400">กำหนดส่ง</label>
+                            <label className="font-medium text-sm text-red-700 dark:text-red-400">กำหนดส่ง</label>
                           </div>
 
                           {subjectData.hasDue && (
                             <div className="pl-6 pb-2">
                               {canEdit ? (
-                                <input type="date" className="p-2 rounded border focus:ring-2 focus:ring-red-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm w-full md:w-auto" value={subjectData.dueDate} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'dueDate', e.target.value)} />
+                                <input type="date" className="p-2 rounded border focus:ring-2 focus:ring-red-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm w-full md:w-auto cursor-pointer" value={subjectData.dueDate} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'dueDate', e.target.value)} />
                               ) : ( <span className="text-sm font-bold bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-3 py-1 rounded">{formatDateTH(subjectData.dueDate) || 'ไม่ได้ระบุ'}</span> )}
                             </div>
                           )}
@@ -666,16 +603,13 @@ export default function HomeworkTracker() {
     );
   };
 
-  const SearchView = () => {
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState([]);
-
-    const handleSearch = () => {
-      if(!query.trim()) return;
-      const term = query.toLowerCase();
+  const renderSearchView = () => {
+    const handleSearchClick = () => {
+      if(!searchQuery.trim()) return;
+      const term = searchQuery.toLowerCase();
       const found = [];
       Object.keys(records).forEach(date => {
-        Object.entries(records[date].subjects).forEach(([id, sub]) => {
+        Object.entries(records[date].subjects || {}).forEach(([id, sub]) => {
           const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === id);
           const subjName = scheduleItem?.name || '';
           if (subjName.toLowerCase().includes(term) || (sub.topic && sub.topic.toLowerCase().includes(term)) || (sub.hwDetail && sub.hwDetail.toLowerCase().includes(term))) {
@@ -686,7 +620,7 @@ export default function HomeworkTracker() {
            found.push({ date, subjectName: 'หมายเหตุประจำวัน', topic: records[date].note, hwDetail: null });
         }
       });
-      setResults(found.sort((a,b) => new Date(b.date) - new Date(a.date)));
+      setSearchResults(found.sort((a,b) => new Date(b.date) - new Date(a.date)));
     };
 
     return (
@@ -697,13 +631,13 @@ export default function HomeworkTracker() {
         </header>
 
         <div className="flex gap-2">
-          <input type="text" placeholder="พิมพ์คำค้นหา..." className="flex-1 p-3 rounded-xl border focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:border-slate-700 outline-none" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearch()} />
-          <button onClick={handleSearch} className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors px-6"><Search size={20} /></button>
+          <input type="text" placeholder="พิมพ์คำค้นหา..." className="flex-1 p-3 rounded-xl border focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:border-slate-700 outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearchClick()} />
+          <button onClick={handleSearchClick} className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors px-6"><Search size={20} /></button>
         </div>
 
         <div className="mt-8 space-y-4">
-          {results.length > 0 ? (
-            results.map((res, i) => (
+          {searchResults.length > 0 ? (
+            searchResults.map((res, i) => (
               <div key={i} className="bg-white dark:bg-slate-800 p-5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700">
                 <div className="flex justify-between items-start mb-2">
                   <h3 className="font-bold text-blue-600 dark:text-blue-400">{res.subjectName}</h3>
@@ -713,7 +647,7 @@ export default function HomeworkTracker() {
                 {res.hwDetail && <p className="text-sm text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 p-2 rounded"><span className="font-semibold text-xs block mb-1">การบ้าน:</span>{res.hwDetail}</p>}
               </div>
             ))
-          ) : query ? ( <p className="text-center text-slate-500 mt-10">ไม่พบข้อมูลที่ตรงกับ "{query}"</p> ) : (
+          ) : searchQuery ? ( <p className="text-center text-slate-500 mt-10">ไม่พบข้อมูลที่ตรงกับ "{searchQuery}"</p> ) : (
             <div className="text-center text-slate-400 dark:text-slate-500 mt-20 flex flex-col items-center"><Search size={48} className="mb-4 opacity-20" /><p>ลองพิมพ์ชื่อวิชา หรือเรื่องที่เรียนเพื่อค้นหา</p></div>
           )}
         </div>
@@ -721,10 +655,10 @@ export default function HomeworkTracker() {
     );
   };
 
-  const CalendarView = () => {
+  const renderCalendarView = () => {
     const dueDates = [];
     Object.keys(records).forEach(date => {
-      Object.entries(records[date].subjects).forEach(([id, sub]) => {
+      Object.entries(records[date].subjects || {}).forEach(([id, sub]) => {
         if (sub.hasDue && sub.dueDate) {
            const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === id);
            dueDates.push({ date: sub.dueDate, subject: scheduleItem?.name || id, detail: sub.hwDetail });
@@ -759,62 +693,60 @@ export default function HomeworkTracker() {
     );
   };
 
-  const AdminView = () => {
+  const renderAdminView = () => {
     if (!isAdmin) return <div className="p-8 text-center text-red-500 font-bold text-xl">ไม่มีสิทธิ์เข้าถึงหน้านี้</div>;
-    const [showAddForm, setShowAddForm] = useState(false);
-    const [editUserId, setEditUserId] = useState(null);
-    const [formData, setFormData] = useState({ username: '', password: '', name: '' });
-    const [customInputs, setCustomInputs] = useState({});
 
-    const handleCustomInput = (userId, field, value) => { setCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [field]: value } })); };
+    const handleAdminCustomInput = (userId, field, value) => { 
+      setAdminCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [field]: value } })); 
+    };
 
     const grantReward = (userId, type, value, points) => {
       let logAdded = null;
       const newUsers = users.map(u => {
         if(u.id === userId) {
-          if (type === 'badge' && !u.badges.includes(value)) { 
+          if (type === 'badge' && !(u.badges || []).includes(value)) { 
              logAdded = { id: Date.now(), action: 'มอบเหรียญรางวัล', detail: `มอบเหรียญ "${value}" ให้กับ ${u.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
-             return { ...u, badges: [...u.badges, value], points: u.points + points }; 
+             return { ...u, badges: [...(u.badges || []), value], points: (u.points || 0) + points }; 
           }
-          if (type === 'praise' && !u.praises.includes(value)) { 
+          if (type === 'praise' && !(u.praises || []).includes(value)) { 
              logAdded = { id: Date.now(), action: 'ชื่นชมผลงาน', detail: `ชื่นชม "${value}" ให้กับ ${u.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
-             return { ...u, praises: [...u.praises, value], points: u.points + points }; 
+             return { ...u, praises: [...(u.praises || []), value], points: (u.points || 0) + points }; 
           }
         }
         return u;
       });
       const newLogs = logAdded ? [logAdded, ...logs].slice(0, 50) : logs;
       
-      syncToDB({ users: newUsers, logs: newLogs }); // ☁️ ซิงค์
-      setCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [type]: '' } }));
+      syncToDB({ users: newUsers, logs: newLogs }); 
+      setAdminCustomInputs(prev => ({ ...prev, [userId]: { ...prev[userId], [type]: '' } }));
     };
 
     const handleAddUser = (e) => {
       e.preventDefault();
-      if (users.find(u => u.username === formData.username)) { alert('Username นี้มีในระบบแล้ว กรุณาใช้ชื่ออื่น'); return; }
-      const newUser = { id: 'u' + Date.now(), username: formData.username, password: formData.password, name: formData.name, role: 'writer', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false };
+      if (users.find(u => u.username === adminFormData.username)) { alert('Username นี้มีในระบบแล้ว กรุณาใช้ชื่ออื่น'); return; }
+      const newUser = { id: 'u' + Date.now(), username: adminFormData.username, password: adminFormData.password, name: adminFormData.name, role: 'writer', points: 0, badges: [], praises: [], status: 'offline', lastLogin: '-', isLocked: false, forcePwd: false };
       
       const newUsers = [...users, newUser];
-      const newLog = { id: Date.now(), action: 'เพิ่มผู้ใช้งาน', detail: `เพิ่มบัญชีคนจดการบ้าน: ${formData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+      const newLog = { id: Date.now(), action: 'เพิ่มผู้ใช้งาน', detail: `เพิ่มบัญชีคนจดการบ้าน: ${adminFormData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
       
-      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
-      setShowAddForm(false); setFormData({ username: '', password: '', name: '' });
+      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); 
+      setAdminShowAddForm(false); setAdminFormData({ username: '', password: '', name: '' });
     };
 
     const handleUpdateUser = (e) => {
       e.preventDefault();
-      const newUsers = users.map(u => u.id === editUserId ? { ...u, name: formData.name, username: formData.username, password: formData.password } : u);
-      const newLog = { id: Date.now(), action: 'แก้ไขผู้ใช้งาน', detail: `แก้ไขข้อมูลคนจดการบ้าน: ${formData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
+      const newUsers = users.map(u => u.id === adminEditUserId ? { ...u, name: adminFormData.name, username: adminFormData.username, password: adminFormData.password } : u);
+      const newLog = { id: Date.now(), action: 'แก้ไขผู้ใช้งาน', detail: `แก้ไขข้อมูลคนจดการบ้าน: ${adminFormData.name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
       
-      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
-      setEditUserId(null); setFormData({ username: '', password: '', name: '' });
+      syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); 
+      setAdminEditUserId(null); setAdminFormData({ username: '', password: '', name: '' });
     };
 
     const handleDeleteUser = (id, name) => {
       if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบบัญชี "${name}"?`)) { 
         const newUsers = users.filter(u => u.id !== id);
         const newLog = { id: Date.now(), action: 'ลบผู้ใช้งาน', detail: `ลบบัญชีคนจดการบ้าน: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
-        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); 
       }
     };
 
@@ -822,7 +754,7 @@ export default function HomeworkTracker() {
       if (window.confirm(`รีเซ็ตรหัสผ่านของ "${name}" เป็น "password" และบังคับเปลี่ยนรหัสใหม่ในการเข้าสู่ระบบครั้งหน้า?`)) {
         const newUsers = users.map(u => u.id === id ? { ...u, password: 'password', forcePwd: true } : u);
         const newLog = { id: Date.now(), action: 'รีเซ็ตรหัสผ่าน', detail: `รีเซ็ตรหัสผ่านบัญชี: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
-        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); 
         alert('รีเซ็ตสำเร็จ รหัสผ่านชั่วคราวคือ: password');
       }
     };
@@ -832,7 +764,7 @@ export default function HomeworkTracker() {
       if (window.confirm(`ต้องการ${action}บัญชี "${name}" ใช่หรือไม่?`)) { 
         const newUsers = users.map(u => u.id === id ? { ...u, isLocked: !isLocked } : u);
         const newLog = { id: Date.now(), action: `${action}บัญชี`, detail: `${action}บัญชีคนจดการบ้าน: ${name}`, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) };
-        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); // ☁️ ซิงค์
+        syncToDB({ users: newUsers, logs: [newLog, ...logs].slice(0, 50) }); 
       }
     };
 
@@ -840,18 +772,18 @@ export default function HomeworkTracker() {
       <div className="space-y-8 animate-in fade-in duration-300">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div><h1 className="text-3xl font-bold text-slate-800 dark:text-white flex items-center gap-3"><Shield className="text-blue-600" /> ระบบจัดการผู้ใช้ (User Management)</h1><p className="text-slate-500 mt-2">จัดการบัญชีคนจดการบ้าน ความปลอดภัย และให้คะแนน</p></div>
-          <button onClick={() => { setShowAddForm(!showAddForm); setEditUserId(null); setFormData({ username: '', password: '', name: '' }); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 shadow-sm transition-colors w-full md:w-auto justify-center">
-            {showAddForm ? <X size={20}/> : <Plus size={20}/>} {showAddForm ? 'ยกเลิก' : 'เพิ่มคนจดการบ้าน'}
+          <button onClick={() => { setAdminShowAddForm(!adminShowAddForm); setAdminEditUserId(null); setAdminFormData({ username: '', password: '', name: '' }); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 shadow-sm transition-colors w-full md:w-auto justify-center">
+            {adminShowAddForm ? <X size={20}/> : <Plus size={20}/>} {adminShowAddForm ? 'ยกเลิก' : 'เพิ่มคนจดการบ้าน'}
           </button>
         </header>
 
-        {showAddForm && (
+        {adminShowAddForm && (
           <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-blue-200 dark:border-blue-900/50 mb-6 animate-in slide-in-from-top-4">
             <h2 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">เพิ่มบัญชีคนจดการบ้านใหม่</h2>
             <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div><label className="block text-sm font-medium mb-1">ชื่อ-นามสกุล</label><input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
-              <div><label className="block text-sm font-medium mb-1">Username (ใช้ล็อกอิน)</label><input type="text" required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
-              <div><label className="block text-sm font-medium mb-1">รหัสผ่าน</label><input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
+              <div><label className="block text-sm font-medium mb-1">ชื่อ-นามสกุล</label><input type="text" required value={adminFormData.name} onChange={e => setAdminFormData({...adminFormData, name: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
+              <div><label className="block text-sm font-medium mb-1">Username (ใช้ล็อกอิน)</label><input type="text" required value={adminFormData.username} onChange={e => setAdminFormData({...adminFormData, username: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
+              <div><label className="block text-sm font-medium mb-1">รหัสผ่าน</label><input type="text" required value={adminFormData.password} onChange={e => setAdminFormData({...adminFormData, password: e.target.value})} className="w-full p-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" /></div>
               <div className="md:col-span-3 flex justify-end mt-2"><button type="submit" className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm">บันทึกข้อมูล</button></div>
             </form>
           </div>
@@ -860,28 +792,28 @@ export default function HomeworkTracker() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {users.filter(u => u.role === 'writer').map(user => (
             <div key={user.id} className={`bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border ${user.isLocked ? 'border-red-300 dark:border-red-800' : 'border-slate-200 dark:border-slate-700'} relative`}>
-              {editUserId === user.id ? (
+              {adminEditUserId === user.id ? (
                 <form onSubmit={handleUpdateUser} className="space-y-3 animate-in fade-in">
                   <h3 className="font-bold text-lg text-blue-600 dark:text-blue-400 mb-2 border-b dark:border-slate-700 pb-2">แก้ไขข้อมูลบัญชี</h3>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="col-span-2"><label className="block text-xs font-medium mb-1 text-slate-500">ชื่อ-นามสกุล</label><input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
-                    <div><label className="block text-xs font-medium mb-1 text-slate-500">Username</label><input type="text" required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
-                    <div><label className="block text-xs font-medium mb-1 text-slate-500">รหัสผ่าน</label><input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
+                    <div className="col-span-2"><label className="block text-xs font-medium mb-1 text-slate-500">ชื่อ-นามสกุล</label><input type="text" required value={adminFormData.name} onChange={e => setAdminFormData({...adminFormData, name: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
+                    <div><label className="block text-xs font-medium mb-1 text-slate-500">Username</label><input type="text" required value={adminFormData.username} onChange={e => setAdminFormData({...adminFormData, username: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
+                    <div><label className="block text-xs font-medium mb-1 text-slate-500">รหัสผ่าน</label><input type="text" required value={adminFormData.password} onChange={e => setAdminFormData({...adminFormData, password: e.target.value})} className="w-full p-2 rounded border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none text-sm" /></div>
                   </div>
                   <div className="flex gap-2 pt-2">
                     <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium flex-1">บันทึก</button>
-                    <button type="button" onClick={() => setEditUserId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 px-4 py-1.5 rounded text-sm font-medium">ยกเลิก</button>
+                    <button type="button" onClick={() => setAdminEditUserId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 px-4 py-1.5 rounded text-sm font-medium">ยกเลิก</button>
                   </div>
                 </form>
               ) : (
                 <>
                   <div className="absolute top-4 right-4 flex gap-1">
-                    <button onClick={() => { setEditUserId(user.id); setFormData({ username: user.username, password: user.password, name: user.name }); setShowAddForm(false); }} className="text-slate-500 hover:bg-blue-100 hover:text-blue-600 dark:hover:bg-blue-900/30 dark:hover:text-blue-400 transition-colors p-1.5 rounded-lg" title="แก้ไข"><Edit3 size={18} /></button>
+                    <button onClick={() => { setAdminEditUserId(user.id); setAdminFormData({ username: user.username, password: user.password, name: user.name }); setAdminShowAddForm(false); }} className="text-slate-500 hover:bg-blue-100 hover:text-blue-600 dark:hover:bg-blue-900/30 dark:hover:text-blue-400 transition-colors p-1.5 rounded-lg" title="แก้ไข"><Edit3 size={18} /></button>
                     <button onClick={() => handleDeleteUser(user.id, user.name)} className="text-slate-500 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors p-1.5 rounded-lg" title="ลบผู้ใช้"><Trash2 size={18} /></button>
                   </div>
                   <div className="flex justify-between items-start mb-4 pr-16">
                     <div><h3 className="font-bold text-lg flex items-center gap-2"><User size={18}/> {user.name} {user.isLocked && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full border border-red-200">ถูกล็อก</span>}</h3><p className="text-sm text-slate-500 font-mono mt-1">@{user.username}</p></div>
-                    <div className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400 font-bold px-3 py-1 rounded-full text-sm shrink-0 flex items-center gap-1"><Star size={14} className="fill-current" /> {user.points}</div>
+                    <div className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400 font-bold px-3 py-1 rounded-full text-sm shrink-0 flex items-center gap-1"><Star size={14} className="fill-current" /> {user.points || 0}</div>
                   </div>
                   <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg text-sm mb-4">
                     <div><p className="text-slate-500 text-xs font-semibold mb-1">สถานะ</p><div className="flex items-center gap-1.5"><div className={`w-2 h-2 rounded-full ${user.status === 'online' ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}`}></div><span className={user.status === 'online' ? 'text-green-600 font-medium' : 'text-slate-500'}>{user.status === 'online' ? 'ออนไลน์' : 'ออฟไลน์'}</span></div></div>
@@ -897,8 +829,8 @@ export default function HomeworkTracker() {
                       <div className="flex flex-wrap gap-1.5 mb-2">{(user.badges || []).map((b, i) => <span key={i} className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded border border-slate-200 dark:border-slate-600">{b}</span>)}</div>
                       <div className="flex gap-1">
                         <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'badge', e.target.value, 10); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกให้เหรียญรางวัล...</option>{BADGES.filter(b => !(user.badges || []).includes(b)).map((badge, i) => <option key={i} value={badge}>{badge}</option>)}</select>
-                        <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={customInputs[user.id]?.badge || ''} onChange={(e) => handleCustomInput(user.id, 'badge', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'badge', e.target.value, 10); }}/>
-                        <button onClick={() => {if(customInputs[user.id]?.badge) grantReward(user.id, 'badge', customInputs[user.id].badge, 10);}} className="bg-blue-100 text-blue-600 px-2 rounded hover:bg-blue-200 text-xs font-bold">+</button>
+                        <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={adminCustomInputs[user.id]?.badge || ''} onChange={(e) => handleAdminCustomInput(user.id, 'badge', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'badge', e.target.value, 10); }}/>
+                        <button onClick={() => {if(adminCustomInputs[user.id]?.badge) grantReward(user.id, 'badge', adminCustomInputs[user.id].badge, 10);}} className="bg-blue-100 text-blue-600 px-2 rounded hover:bg-blue-200 text-xs font-bold">+</button>
                       </div>
                     </div>
                     <div>
@@ -906,8 +838,8 @@ export default function HomeworkTracker() {
                       <div className="flex flex-wrap gap-1.5 mb-2">{(user.praises || []).map((p, i) => <span key={i} className="text-xs bg-yellow-50 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200 px-2 py-1 rounded border border-yellow-200 dark:border-yellow-900/50">{p}</span>)}</div>
                       <div className="flex gap-1">
                         <select onChange={(e) => { if(e.target.value) grantReward(user.id, 'praise', e.target.value, 5); e.target.value=''; }} className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none flex-1"><option value="">+ เลือกคำชม...</option>{PRAISES.filter(p => !(user.praises || []).includes(p)).map((p, i) => <option key={i} value={p}>{p}</option>)}</select>
-                        <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={customInputs[user.id]?.praise || ''} onChange={(e) => handleCustomInput(user.id, 'praise', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'praise', e.target.value, 5); }}/>
-                        <button onClick={() => {if(customInputs[user.id]?.praise) grantReward(user.id, 'praise', customInputs[user.id].praise, 5);}} className="bg-yellow-100 text-yellow-700 px-2 rounded hover:bg-yellow-200 text-xs font-bold">+</button>
+                        <input type="text" placeholder="พิมพ์เอง..." className="text-xs p-1.5 rounded border dark:bg-slate-700 dark:border-slate-600 outline-none w-24" value={adminCustomInputs[user.id]?.praise || ''} onChange={(e) => handleAdminCustomInput(user.id, 'praise', e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && e.target.value) grantReward(user.id, 'praise', e.target.value, 5); }}/>
+                        <button onClick={() => {if(adminCustomInputs[user.id]?.praise) grantReward(user.id, 'praise', adminCustomInputs[user.id].praise, 5);}} className="bg-yellow-100 text-yellow-700 px-2 rounded hover:bg-yellow-200 text-xs font-bold">+</button>
                       </div>
                     </div>
                   </div>
@@ -920,7 +852,7 @@ export default function HomeworkTracker() {
     );
   };
 
-  const LogsView = () => {
+  const renderLogsView = () => {
     if (!isAdmin) return <div className="p-8 text-center text-red-500 font-bold text-xl">ไม่มีสิทธิ์เข้าถึงหน้านี้</div>;
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -944,7 +876,7 @@ export default function HomeworkTracker() {
     );
   };
 
-  const ProfileView = () => {
+  const renderProfileView = () => {
     if (currentUser?.role !== 'writer') return null;
     const myLogs = logs.filter(l => l.by === currentUser.name).slice(0, 10);
     return (
@@ -955,7 +887,7 @@ export default function HomeworkTracker() {
           <h1 className="text-2xl font-bold text-slate-800 dark:text-white relative z-10">{currentUser.name}</h1>
           <p className="text-slate-500 mb-8 relative z-10">ตำแหน่ง: คนจดการบ้านประจำห้อง</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 relative z-10 mb-8">
-            <div className="bg-blue-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">คะแนนสะสม</p><p className="text-3xl font-black text-blue-600 dark:text-blue-400">{currentUser.points}</p></div>
+            <div className="bg-blue-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">คะแนนสะสม</p><p className="text-3xl font-black text-blue-600 dark:text-blue-400">{currentUser.points || 0}</p></div>
             <div className="bg-purple-50 dark:bg-slate-700 rounded-2xl p-4"><p className="text-sm text-slate-500 font-bold mb-1">เหรียญรางวัล</p><p className="text-3xl font-black text-purple-600 dark:text-purple-400">{(currentUser.badges || []).length}</p></div>
             <div className="bg-yellow-50 dark:bg-slate-700 rounded-2xl p-4 col-span-2 md:col-span-1"><p className="text-sm text-slate-500 font-bold mb-1">คำชมที่ได้รับ</p><p className="text-3xl font-black text-yellow-600 dark:text-yellow-400">{(currentUser.praises || []).length}</p></div>
           </div>
@@ -984,15 +916,15 @@ export default function HomeworkTracker() {
     );
   };
 
-  return (
-    <Layout>
-      {currentView === 'dashboard' && <DashboardView />}
-      {currentView === 'timetable' && <TimetableView />}
-      {currentView === 'calendar' && <CalendarView />}
-      {currentView === 'search' && <SearchView />}
-      {currentView === 'admin' && <AdminView />}
-      {currentView === 'logs' && <LogsView />}
-      {currentView === 'profile' && <ProfileView />}
-    </Layout>
+  return renderLayout(
+    <>
+      {currentView === 'dashboard' && renderDashboardView()}
+      {currentView === 'timetable' && renderTimetableView()}
+      {currentView === 'calendar' && renderCalendarView()}
+      {currentView === 'search' && renderSearchView()}
+      {currentView === 'admin' && renderAdminView()}
+      {currentView === 'logs' && renderLogsView()}
+      {currentView === 'profile' && renderProfileView()}
+    </>
   );
 }
