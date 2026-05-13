@@ -76,8 +76,13 @@ const getThaiDateInfo = (dateObj = new Date()) => {
   const day = thaiTime.getDay();
   const isWeekend = day === 0 || day === 6;
   const activeDay = isWeekend ? 1 : day;
-  const dateStr = thaiTime.toISOString().split('T')[0];
-  return { date: thaiTime, dayOfWeek: activeDay, dateStr, isWeekend };
+  
+  // Format Date safely
+  const year = thaiTime.getFullYear();
+  const month = String(thaiTime.getMonth() + 1).padStart(2, '0');
+  const dateStrSafe = String(thaiTime.getDate()).padStart(2, '0');
+  
+  return { date: thaiTime, dayOfWeek: activeDay, dateStr: `${year}-${month}-${dateStrSafe}`, isWeekend };
 };
 
 const formatDateTH = (dateStr) => {
@@ -119,7 +124,7 @@ export default function HomeworkTracker() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // --- ย้าย State ของหน้าค้นหาและผู้ดูแลระบบขึ้นมาไว้ตรงนี้ ---
+  // States สำหรับหน้าค้นหาและผู้ดูแลระบบ
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   
@@ -219,18 +224,37 @@ export default function HomeworkTracker() {
     setCurrentView('login');
   };
 
-  const addLog = (action, detail) => {
-    if (!currentUser) return;
-    setLogs(prev => [{ id: Date.now(), action, detail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prev]);
-  };
+  // ☁️ ระบบบันทึกข้อมูลแบบปลอดภัย (อัปเดตเฉพาะวัน ป้องกันวันอื่นหาย)
+  const updateRecord = async (dateStr, subjectId, field, value) => {
+    let updatedDayData = null;
 
-  const updateRecord = (dateStr, subjectId, field, value) => {
-    const dayRecord = records[dateStr] || { note: '', subjects: {} };
-    const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
-    
-    const newRecords = { ...records, [dateStr]: { ...dayRecord, subjects: { ...(dayRecord.subjects || {}), [subjectId]: { ...subjectRecord, [field]: value } } } };
-    let newLogs = [...logs];
+    // อัปเดต State ภายในเว็บ
+    setRecords(prev => {
+      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
+      const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+      
+      updatedDayData = { 
+        ...dayRecord, 
+        subjects: { 
+          ...(dayRecord.subjects || {}), 
+          [subjectId]: { ...subjectRecord, [field]: value } 
+        } 
+      };
 
+      return { ...prev, [dateStr]: updatedDayData };
+    });
+
+    // ส่งข้อมูลเฉพาะวันนั้นขึ้นคลาวด์ ป้องกันการลบข้อมูลวันอื่น
+    if (updatedDayData) {
+      try {
+        const docRef = doc(db, "homeworkData", "main");
+        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+      } catch (err) {
+        console.error("Firebase updateRecord error:", err);
+      }
+    }
+
+    // จัดการ Logs ของผู้จด
     if (currentUser) {
       const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === subjectId);
       const subjName = scheduleItem ? scheduleItem.name : 'วิชา';
@@ -242,27 +266,46 @@ export default function HomeworkTracker() {
       else if(field === 'dueDate') actionDetail = `เลื่อน/เปลี่ยนกำหนดส่งวิชา ${subjName}`;
 
       if (actionDetail) {
-         if(!(newLogs.length > 0 && newLogs[0].detail === actionDetail && newLogs[0].by === currentUser.name)) {
-            newLogs = [{ id: Date.now(), action: 'แก้ไขข้อมูลรายวิชา', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...newLogs].slice(0, 50);
-         }
+         setLogs(prevLogs => {
+            if(prevLogs.length > 0 && prevLogs[0].detail === actionDetail && prevLogs[0].by === currentUser.name) return prevLogs;
+            const newLogs = [{ id: Date.now(), action: 'แก้ไขข้อมูลรายวิชา', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prevLogs].slice(0, 50);
+            
+            // อัปเดต Logs ทันที
+            const docRef = doc(db, "homeworkData", "main");
+            setDoc(docRef, { logs: newLogs }, { merge: true });
+            
+            return newLogs;
+         });
       }
     }
-
-    setRecords(newRecords);
-    syncToDB({ records: newRecords, logs: newLogs }); 
   };
 
-  const updateDailyNote = (dateStr, note) => {
-    const newRecords = { ...records, [dateStr]: { ...(records[dateStr] || { subjects: {} }), note } };
-    setRecords(newRecords);
-    syncToDB({ records: newRecords }); 
+  const updateDailyNote = async (dateStr, note) => {
+    let updatedDayData = null;
+    setRecords(prev => {
+      updatedDayData = { ...(prev[dateStr] || { subjects: {} }), note };
+      return { ...prev, [dateStr]: updatedDayData };
+    });
+
+    // อัปเดตโน้ตรายวันอย่างปลอดภัย
+    if (updatedDayData) {
+      try {
+        const docRef = doc(db, "homeworkData", "main");
+        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+      } catch (err) {
+        console.error(err);
+      }
+    }
   };
 
+  // เลื่อนวันซ้าย-ขวาอย่างปลอดภัยจาก Timezone
   const handleDateOffset = (offset) => {
-    const d = new Date(selectedDateStr);
+    const parts = selectedDateStr.split('-');
+    const d = new Date(parts[0], parts[1] - 1, parts[2]);
     d.setDate(d.getDate() + offset);
     if (d.getDay() === 0) d.setDate(d.getDate() + (offset > 0 ? 1 : -2));
     if (d.getDay() === 6) d.setDate(d.getDate() + (offset > 0 ? 2 : -1));
+    
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const dayStr = String(d.getDate()).padStart(2, '0');
