@@ -76,13 +76,8 @@ const getThaiDateInfo = (dateObj = new Date()) => {
   const day = thaiTime.getDay();
   const isWeekend = day === 0 || day === 6;
   const activeDay = isWeekend ? 1 : day;
-  
-  // Format Date safely
-  const year = thaiTime.getFullYear();
-  const month = String(thaiTime.getMonth() + 1).padStart(2, '0');
-  const dateStrSafe = String(thaiTime.getDate()).padStart(2, '0');
-  
-  return { date: thaiTime, dayOfWeek: activeDay, dateStr: `${year}-${month}-${dateStrSafe}`, isWeekend };
+  const dateStr = thaiTime.toISOString().split('T')[0];
+  return { date: thaiTime, dayOfWeek: activeDay, dateStr, isWeekend };
 };
 
 const formatDateTH = (dateStr) => {
@@ -124,17 +119,18 @@ export default function HomeworkTracker() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // States สำหรับหน้าค้นหาและผู้ดูแลระบบ
+  // States สำหรับหน้าค้นหา
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   
+  // States สำหรับหน้าแอดมิน
   const [adminShowAddForm, setAdminShowAddForm] = useState(false);
   const [adminEditUserId, setAdminEditUserId] = useState(null);
   const [adminFormData, setAdminFormData] = useState({ username: '', password: '', name: '' });
   const [adminCustomInputs, setAdminCustomInputs] = useState({});
 
   // ==========================================
-  // ระบบเชื่อมต่อและ Auto-Save Firebase
+  // ระบบเชื่อมต่อ Firebase (Real-time Sync)
   // ==========================================
 
   const syncToDB = async (dataToUpdate) => {
@@ -193,7 +189,6 @@ export default function HomeworkTracker() {
     const newUsers = users.map(u => u.id === user.id ? { ...u, status: 'online', lastLogin: now } : u);
     
     syncToDB({ users: newUsers }); 
-    
     setCurrentUser({ ...user, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
     setPendingPwdUser(null);
@@ -208,7 +203,6 @@ export default function HomeworkTracker() {
     const newUsers = users.map(u => u.id === user.id ? { ...u, password: newPwd, forcePwd: false, status: 'online', lastLogin: now } : u);
     
     syncToDB({ users: newUsers });
-
     setCurrentUser({ ...user, password: newPwd, forcePwd: false, status: 'online', lastLogin: now });
     setCurrentView('dashboard');
     setPendingPwdUser(null);
@@ -224,37 +218,32 @@ export default function HomeworkTracker() {
     setCurrentView('login');
   };
 
-  // ☁️ ระบบบันทึกข้อมูลแบบปลอดภัย (อัปเดตเฉพาะวัน ป้องกันวันอื่นหาย)
+  // ☁️ ฟังก์ชันอัปเดตตารางเรียน (แก้ปัญหาติ๊ก Checkbox ไม่ติด)
   const updateRecord = async (dateStr, subjectId, field, value) => {
-    let updatedDayData = null;
+    // 1. จำลองข้อมูลปัจจุบันขึ้นมาใหม่ทันที
+    const dayRecord = records[dateStr] || { note: '', subjects: {} };
+    const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+    
+    const updatedDayData = { 
+      ...dayRecord, 
+      subjects: { 
+        ...(dayRecord.subjects || {}), 
+        [subjectId]: { ...subjectRecord, [field]: value } 
+      } 
+    };
 
-    // อัปเดต State ภายในเว็บ
-    setRecords(prev => {
-      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
-      const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
-      
-      updatedDayData = { 
-        ...dayRecord, 
-        subjects: { 
-          ...(dayRecord.subjects || {}), 
-          [subjectId]: { ...subjectRecord, [field]: value } 
-        } 
-      };
+    // 2. สั่งเปลี่ยน State ในหน้าจอตัวเองทันที เพื่อให้ Checkbox ติดหนึบไม่มีดีเลย์
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
 
-      return { ...prev, [dateStr]: updatedDayData };
-    });
-
-    // ส่งข้อมูลเฉพาะวันนั้นขึ้นคลาวด์ ป้องกันการลบข้อมูลวันอื่น
-    if (updatedDayData) {
-      try {
-        const docRef = doc(db, "homeworkData", "main");
-        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error("Firebase updateRecord error:", err);
-      }
+    // 3. ส่งข้อมูลชุดที่เปลี่ยน ขึ้น Firebase
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+    } catch (err) {
+      console.error("Firebase updateRecord error:", err);
     }
 
-    // จัดการ Logs ของผู้จด
+    // 4. บันทึก Log การกระทำลงระบบ
     if (currentUser) {
       const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === subjectId);
       const subjName = scheduleItem ? scheduleItem.name : 'วิชา';
@@ -268,12 +257,11 @@ export default function HomeworkTracker() {
       if (actionDetail) {
          setLogs(prevLogs => {
             if(prevLogs.length > 0 && prevLogs[0].detail === actionDetail && prevLogs[0].by === currentUser.name) return prevLogs;
-            const newLogs = [{ id: Date.now(), action: 'แก้ไขข้อมูลรายวิชา', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prevLogs].slice(0, 50);
+            const newLogs = [{ id: Date.now(), action: 'อัปเดตงาน', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prevLogs].slice(0, 50);
             
-            // อัปเดต Logs ทันที
+            // อัปเดต Log ขึ้น Firebase
             const docRef = doc(db, "homeworkData", "main");
             setDoc(docRef, { logs: newLogs }, { merge: true });
-            
             return newLogs;
          });
       }
@@ -281,31 +269,24 @@ export default function HomeworkTracker() {
   };
 
   const updateDailyNote = async (dateStr, note) => {
-    let updatedDayData = null;
-    setRecords(prev => {
-      updatedDayData = { ...(prev[dateStr] || { subjects: {} }), note };
-      return { ...prev, [dateStr]: updatedDayData };
-    });
+    const dayRecord = records[dateStr] || { note: '', subjects: {} };
+    const updatedDayData = { ...dayRecord, note };
 
-    // อัปเดตโน้ตรายวันอย่างปลอดภัย
-    if (updatedDayData) {
-      try {
-        const docRef = doc(db, "homeworkData", "main");
-        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error(err);
-      }
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
+
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+    } catch (err) {
+      console.error("Firebase updateDailyNote error:", err);
     }
   };
 
-  // เลื่อนวันซ้าย-ขวาอย่างปลอดภัยจาก Timezone
   const handleDateOffset = (offset) => {
-    const parts = selectedDateStr.split('-');
-    const d = new Date(parts[0], parts[1] - 1, parts[2]);
+    const d = new Date(selectedDateStr);
     d.setDate(d.getDate() + offset);
     if (d.getDay() === 0) d.setDate(d.getDate() + (offset > 0 ? 1 : -2));
     if (d.getDay() === 6) d.setDate(d.getDate() + (offset > 0 ? 2 : -1));
-    
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const dayStr = String(d.getDate()).padStart(2, '0');
@@ -321,66 +302,6 @@ export default function HomeworkTracker() {
   // ==========================================
   // RENDER FUNCTIONS
   // ==========================================
-
-  if (currentView === 'login') {
-    if (pendingPwdUser) {
-      return (
-        <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-          <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-            <div className="text-center mb-6">
-              <Shield className="mx-auto text-orange-500 mb-4" size={48} />
-              <h2 className="text-xl font-bold text-slate-800 dark:text-white">บังคับเปลี่ยนรหัสผ่าน</h2>
-              <p className="text-sm text-slate-500 mt-2">แอดมินได้รีเซ็ตรหัสผ่านของคุณ กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย</p>
-            </div>
-            <form onSubmit={handleForcePasswordChange} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">รหัสผ่านใหม่</label>
-                <input name="newPassword" type="password" required minLength="6" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="อย่างน้อย 6 ตัวอักษร" />
-              </div>
-              <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2.5 rounded-lg transition-colors">บันทึกรหัสผ่านและเข้าสู่ระบบ</button>
-              <button type="button" onClick={() => setPendingPwdUser(null)} className="w-full text-slate-500 hover:underline text-sm mt-2">ยกเลิก</button>
-            </form>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-        <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-          <div className="text-center mb-8">
-            <div className="bg-blue-100 text-blue-600 p-3 rounded-full inline-block mb-4"><BookOpen size={32} /></div>
-            <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">Class Homework Tracker</h1>
-            <p className="text-sm mt-2 opacity-70">ระบบจดการบ้านห้องเรียน 2/10</p>
-          </div>
-          
-          <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.username.value, e.target.password.value); }} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">ชื่อผู้ใช้งาน</label>
-              <input name="username" type="text" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Username" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">รหัสผ่าน</label>
-              <input name="password" type="password" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Password" />
-            </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors">
-              เข้าสู่ระบบ
-            </button>
-          </form>
-          
-          <div className="mt-6 text-center">
-            <p className="text-sm opacity-70 mb-4">หรือ</p>
-            <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
-              เข้าชมในฐานะนักเรียน (Guest) &rarr;
-            </button>
-            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
-              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const renderDateNavigator = () => (
     <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1.5 rounded-xl shadow-sm border border-blue-200 dark:border-blue-900/50 w-full md:w-auto justify-center">
@@ -457,6 +378,7 @@ export default function HomeworkTracker() {
             <button onClick={() => setCurrentView('login')} className="flex items-center gap-3 w-full p-3 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 transition-colors text-sm font-medium"><LogOut size={20} className="rotate-180" /> เข้าสู่ระบบ</button>
           )}
 
+          {/* เครดิตผู้พัฒนา */}
           <div className="mt-6 text-center">
             <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium leading-relaxed">
               ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์
@@ -472,6 +394,66 @@ export default function HomeworkTracker() {
       </main>
     </div>
   );
+
+  if (currentView === 'login') {
+    if (pendingPwdUser) {
+      return (
+        <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
+          <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+            <div className="text-center mb-6">
+              <Shield className="mx-auto text-orange-500 mb-4" size={48} />
+              <h2 className="text-xl font-bold text-slate-800 dark:text-white">บังคับเปลี่ยนรหัสผ่าน</h2>
+              <p className="text-sm text-slate-500 mt-2">แอดมินได้รีเซ็ตรหัสผ่านของคุณ กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย</p>
+            </div>
+            <form onSubmit={handleForcePasswordChange} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">รหัสผ่านใหม่</label>
+                <input name="newPassword" type="password" required minLength="6" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="อย่างน้อย 6 ตัวอักษร" />
+              </div>
+              <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2.5 rounded-lg transition-colors">บันทึกรหัสผ่านและเข้าสู่ระบบ</button>
+              <button type="button" onClick={() => setPendingPwdUser(null)} className="w-full text-slate-500 hover:underline text-sm mt-2">ยกเลิก</button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
+        <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+          <div className="text-center mb-8">
+            <div className="bg-blue-100 text-blue-600 p-3 rounded-full inline-block mb-4"><BookOpen size={32} /></div>
+            <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">Class Homework Tracker</h1>
+            <p className="text-sm mt-2 opacity-70">ระบบจดการบ้านห้องเรียน 2/10</p>
+          </div>
+          
+          <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.username.value, e.target.password.value); }} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">ชื่อผู้ใช้งาน</label>
+              <input name="username" type="text" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Username" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">รหัสผ่าน</label>
+              <input name="password" type="password" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Password" />
+            </div>
+            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors">
+              เข้าสู่ระบบ
+            </button>
+          </form>
+          
+          <div className="mt-6 text-center">
+            <p className="text-sm opacity-70 mb-4">หรือ</p>
+            <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
+              เข้าชมในฐานะนักเรียน (Guest) &rarr;
+            </button>
+            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
+              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const renderDashboardView = () => {
     const todayInfo = getThaiDateInfo();
@@ -584,23 +566,8 @@ export default function HomeworkTracker() {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
-    const handleSave = async () => {
-      try {
-        const newLog = {
-          id: Date.now(),
-          action: 'บันทึกข้อมูลตารางเรียน',
-          detail: `อัปเดตข้อมูลของวันที่ ${formatDateTH(selectedDateStr)}`,
-          by: currentUser?.name || 'system',
-          time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE })
-        };
-        const updatedLogs = [newLog, ...logs].slice(0, 50);
-        
-        await syncToDB({ logs: updatedLogs });
-        alert("ข้อมูลอัปเดตเรียบร้อย! (ระบบมีการบันทึกอัตโนมัติบน Cloud ด้วยครับ)");
-      } catch (error) {
-        console.error(error);
-        alert("บันทึกข้อมูลไม่สำเร็จ");
-      }
+    const handleSave = () => {
+      alert("ระบบได้บันทึกข้อมูลทุกครั้งที่ติ๊ก/พิมพ์ให้อัตโนมัติแล้วครับ! ✅");
     };
 
     return (
@@ -648,7 +615,7 @@ export default function HomeworkTracker() {
                     <div className="bg-orange-50/50 dark:bg-orange-900/10 p-4 rounded-lg border border-orange-100 dark:border-orange-900/30 h-full">
                       <div className="flex items-center gap-2 mb-3">
                         {canEdit ? (
-                          <input type="checkbox" className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 cursor-pointer" checked={subjectData.hasHw} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasHw', e.target.checked)} />
+                          <input type="checkbox" className="w-5 h-5 rounded-lg accent-orange-500 cursor-pointer" checked={subjectData.hasHw || false} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasHw', e.target.checked)} />
                         ) : ( subjectData.hasHw && <CheckSquare size={16} className="text-orange-600" /> )}
                         <label className="font-bold text-sm text-orange-800 dark:text-orange-300">มีการบ้าน / ชิ้นงาน</label>
                       </div>
@@ -666,7 +633,7 @@ export default function HomeworkTracker() {
 
                           <div className="flex items-center gap-2 pt-2">
                             {canEdit ? (
-                              <input type="checkbox" className="w-4 h-4 text-red-600 rounded focus:ring-red-500 cursor-pointer" checked={subjectData.hasDue} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasDue', e.target.checked)} />
+                              <input type="checkbox" className="w-5 h-5 rounded-lg accent-red-500 cursor-pointer" checked={subjectData.hasDue || false} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasDue', e.target.checked)} />
                             ) : ( subjectData.hasDue && <Clock size={16} className="text-red-500" /> )}
                             <label className="font-medium text-sm text-red-700 dark:text-red-400">กำหนดส่ง</label>
                           </div>
@@ -674,7 +641,7 @@ export default function HomeworkTracker() {
                           {subjectData.hasDue && (
                             <div className="pl-6 pb-2">
                               {canEdit ? (
-                                <input type="date" className="p-2 rounded border focus:ring-2 focus:ring-red-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm w-full md:w-auto cursor-pointer" value={subjectData.dueDate} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'dueDate', e.target.value)} />
+                                <input type="date" className="p-2 rounded border focus:ring-2 focus:ring-red-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm w-full md:w-auto cursor-pointer" value={subjectData.dueDate || ''} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'dueDate', e.target.value)} />
                               ) : ( <span className="text-sm font-bold bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-3 py-1 rounded">{formatDateTH(subjectData.dueDate) || 'ไม่ได้ระบุ'}</span> )}
                             </div>
                           )}
@@ -702,7 +669,7 @@ export default function HomeworkTracker() {
 
         {canEdit && (
           <div className="sticky bottom-4 right-0 flex justify-end mt-8 z-10">
-            <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg flex items-center gap-2 transition-transform transform hover:scale-105"><Check size={20} /> บันทึกข้อมูลของวันนี้</button>
+            <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg flex items-center gap-2 transition-transform transform hover:scale-105"><Check size={20} /> ยืนยันข้อมูล</button>
           </div>
         )}
       </div>
