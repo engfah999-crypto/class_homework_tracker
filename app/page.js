@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { db } from "../lib/firebase"; 
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 
 import { 
   BookOpen, Calendar as CalendarIcon, Home, Search, Shield, User, 
@@ -71,14 +71,11 @@ const DEFAULT_USERS = [
 // ==========================================
 // 2. HELPER FUNCTIONS & COMPONENTS
 // ==========================================
-
-// ✅ แก้ปัญหา Timezone ของประเทศไทย
 const getThaiDateInfo = (dateObj = new Date()) => {
   const thaiTime = new Date(dateObj.toLocaleString("en-US", { timeZone: THAI_TIMEZONE }));
   const day = thaiTime.getDay();
   const isWeekend = day === 0 || day === 6;
   const activeDay = isWeekend ? 1 : day;
-  
   const year = thaiTime.getFullYear();
   const month = String(thaiTime.getMonth() + 1).padStart(2, '0');
   const dateStrSafe = String(thaiTime.getDate()).padStart(2, '0');
@@ -125,10 +122,11 @@ export default function HomeworkTracker() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // States สำหรับหน้าค้นหาและผู้ดูแลระบบ
+  // States สำหรับหน้าค้นหา
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   
+  // States สำหรับหน้าแอดมิน
   const [adminShowAddForm, setAdminShowAddForm] = useState(false);
   const [adminEditUserId, setAdminEditUserId] = useState(null);
   const [adminFormData, setAdminFormData] = useState({ username: '', password: '', name: '' });
@@ -223,36 +221,38 @@ export default function HomeworkTracker() {
     setCurrentView('login');
   };
 
-  // ✅ แก้ไขปัญหาข้อมูลหาย: บันทึกเฉพาะเจาะจงรายวัน (Deep Merge)
+  // ✅ ระบบบันทึกตารางเรียน (Deep Merge ป้องกันข้อมูลวันอื่นหาย 100%)
   const updateRecord = async (dateStr, subjectId, field, value) => {
-    let updatedDayData = null;
+    const currentDayRecord = records[dateStr] || { note: '', subjects: {} };
+    const currentSubjectRecord = currentDayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+    
+    const updatedDayData = { 
+      ...currentDayRecord, 
+      subjects: { 
+        ...(currentDayRecord.subjects || {}), 
+        [subjectId]: { ...currentSubjectRecord, [field]: value } 
+      } 
+    };
 
-    setRecords(prev => {
-      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
-      const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
-      
-      updatedDayData = { 
-        ...dayRecord, 
-        subjects: { 
-          ...(dayRecord.subjects || {}), 
-          [subjectId]: { ...subjectRecord, [field]: value } 
-        } 
-      };
+    // อัปเดตหน้าจอทันที
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
 
-      return { ...prev, [dateStr]: updatedDayData };
-    });
-
-    // เซฟเฉพาะวันขึ้น Firebase โดยไม่เขียนทับวันอื่น
-    if (updatedDayData) {
+    // ✅ อัปเดตขึ้น Firebase แบบเจาะจงจุด (ใช้ updateDoc) ไม่ล้างบางวันอื่นๆ
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await updateDoc(docRef, {
+        [`records.${dateStr}.subjects.${subjectId}.${field}`]: value
+      });
+    } catch (err) {
+      // ถ้าโครงสร้างของวันนั้นยังไม่เคยถูกสร้าง ให้ใช้ setDoc แบบ merge เผื่อไว้
       try {
         const docRef = doc(db, "homeworkData", "main");
         await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error("Firebase updateRecord error:", err);
+      } catch (e) {
+        console.error("Firebase updateRecord error:", e);
       }
     }
 
-    // บันทึก Log การกระทำ
     if (currentUser) {
       const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === subjectId);
       const subjName = scheduleItem ? scheduleItem.name : 'วิชา';
@@ -276,39 +276,37 @@ export default function HomeworkTracker() {
     }
   };
 
-  // ✅ แก้ไขปัญหาข้อมูลหาย: บันทึกหมายเหตุเฉพาะเจาะจงรายวัน
+  // ✅ ระบบบันทึกหมายเหตุ (Deep Merge)
   const updateDailyNote = async (dateStr, note) => {
-    let updatedDayData = null;
+    const currentDayRecord = records[dateStr] || { note: '', subjects: {} };
+    const updatedDayData = { ...currentDayRecord, note };
 
-    setRecords(prev => {
-      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
-      updatedDayData = { ...dayRecord, note };
-      return { ...prev, [dateStr]: updatedDayData };
-    });
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
 
-    if (updatedDayData) {
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await updateDoc(docRef, {
+        [`records.${dateStr}.note`]: note
+      });
+    } catch (err) {
       try {
         const docRef = doc(db, "homeworkData", "main");
         await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error("Firebase Note Update Error:", err);
+      } catch (e) {
+        console.error("Firebase updateDailyNote error:", e);
       }
     }
   };
 
-  // ✅ ปรับปรุงระบบเลื่อนวันที่ ให้รองรับโซนเวลาไทยเสมอ
   const handleDateOffset = (offset) => {
     const parts = selectedDateStr.split('-');
-    const d = new Date(parts[0], parts[1] - 1, parts[2]); 
+    const d = new Date(parts[0], parts[1] - 1, parts[2]);
     d.setDate(d.getDate() + offset);
-    
     if (d.getDay() === 0) d.setDate(d.getDate() + (offset > 0 ? 1 : -2));
     if (d.getDay() === 6) d.setDate(d.getDate() + (offset > 0 ? 2 : -1));
-    
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const dayStr = String(d.getDate()).padStart(2, '0');
-    
     setSelectedDateStr(`${year}-${month}-${dayStr}`);
     setSelectedDayOfWeek(d.getDay() || 1);
   };
@@ -319,7 +317,7 @@ export default function HomeworkTracker() {
   if (!isMounted) return null;
 
   // ==========================================
-  // RENDER FUNCTIONS 
+  // RENDER FUNCTIONS
   // ==========================================
 
   if (currentView === 'login') {
@@ -584,9 +582,8 @@ export default function HomeworkTracker() {
     const currentData = records[selectedDateStr] || { note: '', subjects: {} };
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
-    // ✅ ปุ่มบันทึกแก้ไขให้ใช้โชว์ Alert อย่างเดียว เพราะเราเซฟแบบ Auto ไปแล้ว
     const handleSave = () => {
-      alert("ระบบได้บันทึกข้อมูลแบบเรียลไทม์บน Cloud ให้ตลอดเวลาที่คุณใช้งานแล้วครับ! ✅");
+      alert("ระบบได้บันทึกข้อมูลทุกครั้งที่ติ๊ก/พิมพ์ให้อัตโนมัติบน Cloud แล้วครับ! ✅");
     };
 
     return (
@@ -639,8 +636,9 @@ export default function HomeworkTracker() {
                         <label className="font-bold text-sm text-orange-800 dark:text-orange-300">มีการบ้าน / ชิ้นงาน</label>
                       </div>
 
-                      {subjectData.hasHw && (
-                        <div className="space-y-3 pl-6 animate-in slide-in-from-top-2 duration-200">
+                      {/* ✅ ใช้เทคนิค CSS Transition แทนการลบทิ้ง เพื่อแก้บั๊กหน้าจอกระโดด */}
+                      <div className={`overflow-hidden transition-all duration-300 ease-in-out ${subjectData.hasHw ? 'max-h-[500px] opacity-100 mt-3' : 'max-h-0 opacity-0 mt-0'}`}>
+                        <div className="space-y-3 pl-6">
                           {canEdit ? (
                             <SmoothTextarea 
                               className="w-full p-2 rounded border focus:ring-2 focus:ring-orange-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm"
@@ -650,22 +648,23 @@ export default function HomeworkTracker() {
                             />
                           ) : ( <p className="text-sm bg-white dark:bg-slate-800 p-2 rounded border border-orange-100 dark:border-slate-700">{subjectData.hwDetail || '-'}</p> )}
 
-                          <div className="flex items-center gap-2 pt-2">
+                          <div className="flex items-center gap-2 pt-1">
                             {canEdit ? (
                               <input type="checkbox" className="w-5 h-5 rounded-lg accent-red-500 cursor-pointer" checked={subjectData.hasDue || false} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'hasDue', e.target.checked)} />
                             ) : ( subjectData.hasDue && <Clock size={16} className="text-red-500" /> )}
                             <label className="font-medium text-sm text-red-700 dark:text-red-400">กำหนดส่ง</label>
                           </div>
 
-                          {subjectData.hasDue && (
+                          {/* ✅ ใช้เทคนิค CSS Transition แบบเดียวกันสำหรับวันที่ */}
+                          <div className={`overflow-hidden transition-all duration-300 ease-in-out ${subjectData.hasDue ? 'max-h-20 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0'}`}>
                             <div className="pl-6 pb-2">
                               {canEdit ? (
                                 <input type="date" className="p-2 rounded border focus:ring-2 focus:ring-red-500 dark:bg-slate-800 dark:border-slate-600 outline-none text-sm w-full md:w-auto cursor-pointer" value={subjectData.dueDate || ''} onChange={(e) => updateRecord(selectedDateStr, subject.id, 'dueDate', e.target.value)} />
                               ) : ( <span className="text-sm font-bold bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-3 py-1 rounded">{formatDateTH(subjectData.dueDate) || 'ไม่ได้ระบุ'}</span> )}
                             </div>
-                          )}
+                          </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   </div>
                 </div>
