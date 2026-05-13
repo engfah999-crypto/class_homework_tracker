@@ -71,20 +71,13 @@ const DEFAULT_USERS = [
 // ==========================================
 // 2. HELPER FUNCTIONS & COMPONENTS
 // ==========================================
-
-// ✅ แก้ไขบั๊ก Timezone ของประเทศไทย
 const getThaiDateInfo = (dateObj = new Date()) => {
   const thaiTime = new Date(dateObj.toLocaleString("en-US", { timeZone: THAI_TIMEZONE }));
   const day = thaiTime.getDay();
   const isWeekend = day === 0 || day === 6;
   const activeDay = isWeekend ? 1 : day;
-  
-  // ป้องกันปัญหาการตัด String แล้วได้เวลา UTC แบบเดิม
-  const year = thaiTime.getFullYear();
-  const month = String(thaiTime.getMonth() + 1).padStart(2, '0');
-  const dateStrSafe = String(thaiTime.getDate()).padStart(2, '0');
-  
-  return { date: thaiTime, dayOfWeek: activeDay, dateStr: `${year}-${month}-${dateStrSafe}`, isWeekend };
+  const dateStr = thaiTime.toISOString().split('T')[0];
+  return { date: thaiTime, dayOfWeek: activeDay, dateStr, isWeekend };
 };
 
 const formatDateTH = (dateStr) => {
@@ -126,20 +119,20 @@ export default function HomeworkTracker() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // States สำหรับหน้าค้นหาและผู้ดูแลระบบ
+  // States สำหรับหน้าค้นหา
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   
+  // States สำหรับหน้าแอดมิน
   const [adminShowAddForm, setAdminShowAddForm] = useState(false);
   const [adminEditUserId, setAdminEditUserId] = useState(null);
   const [adminFormData, setAdminFormData] = useState({ username: '', password: '', name: '' });
   const [adminCustomInputs, setAdminCustomInputs] = useState({});
 
   // ==========================================
-  // ระบบเชื่อมต่อและ Auto-Save Firebase
+  // ระบบเชื่อมต่อ Firebase (Real-time Sync)
   // ==========================================
 
-  // ฟังก์ชัน Sync ทั่วไป (เช่น ข้อมูล User หรือ Profile)
   const syncToDB = async (dataToUpdate) => {
     try {
       const docRef = doc(db, "homeworkData", "main");
@@ -225,36 +218,32 @@ export default function HomeworkTracker() {
     setCurrentView('login');
   };
 
-  // ✅ ระบบบันทึกข้อมูลแบบปลอดภัย (Deep Merge - ข้อมูลของเมื่อวานจะไม่หาย)
+  // ☁️ ฟังก์ชันอัปเดตตารางเรียน (แก้ปัญหาติ๊ก Checkbox ไม่ติด)
   const updateRecord = async (dateStr, subjectId, field, value) => {
-    let updatedDayData = null;
+    // 1. จำลองข้อมูลปัจจุบันขึ้นมาใหม่ทันที
+    const dayRecord = records[dateStr] || { note: '', subjects: {} };
+    const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
+    
+    const updatedDayData = { 
+      ...dayRecord, 
+      subjects: { 
+        ...(dayRecord.subjects || {}), 
+        [subjectId]: { ...subjectRecord, [field]: value } 
+      } 
+    };
 
-    setRecords(prev => {
-      const dayRecord = prev[dateStr] || { note: '', subjects: {} };
-      const subjectRecord = dayRecord.subjects?.[subjectId] || { topic: '', hasHw: false, hwDetail: '', hasDue: false, dueDate: '' };
-      
-      updatedDayData = { 
-        ...dayRecord, 
-        subjects: { 
-          ...(dayRecord.subjects || {}), 
-          [subjectId]: { ...subjectRecord, [field]: value } 
-        } 
-      };
+    // 2. สั่งเปลี่ยน State ในหน้าจอตัวเองทันที เพื่อให้ Checkbox ติดหนึบไม่มีดีเลย์
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
 
-      return { ...prev, [dateStr]: updatedDayData };
-    });
-
-    // เซฟขึ้น Firebase โดยระบุเฉพาะวัน (dateStr) ป้องกันการเซฟทับข้อมูลวันอื่น
-    if (updatedDayData) {
-      try {
-        const docRef = doc(db, "homeworkData", "main");
-        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error("Firebase Update Error:", err);
-      }
+    // 3. ส่งข้อมูลชุดที่เปลี่ยน ขึ้น Firebase
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+    } catch (err) {
+      console.error("Firebase updateRecord error:", err);
     }
 
-    // จัดการ Log ถ้าเป็น Admin/Writer
+    // 4. บันทึก Log การกระทำลงระบบ
     if (currentUser) {
       const scheduleItem = Object.values(SCHEDULE).flat().find(s => s.id === subjectId);
       const subjName = scheduleItem ? scheduleItem.name : 'วิชา';
@@ -270,6 +259,7 @@ export default function HomeworkTracker() {
             if(prevLogs.length > 0 && prevLogs[0].detail === actionDetail && prevLogs[0].by === currentUser.name) return prevLogs;
             const newLogs = [{ id: Date.now(), action: 'อัปเดตงาน', detail: actionDetail, by: currentUser.name, time: new Date().toLocaleString('th-TH', { timeZone: THAI_TIMEZONE }) }, ...prevLogs].slice(0, 50);
             
+            // อัปเดต Log ขึ้น Firebase
             const docRef = doc(db, "homeworkData", "main");
             setDoc(docRef, { logs: newLogs }, { merge: true });
             return newLogs;
@@ -279,36 +269,27 @@ export default function HomeworkTracker() {
   };
 
   const updateDailyNote = async (dateStr, note) => {
-    let updatedDayData = null;
+    const dayRecord = records[dateStr] || { note: '', subjects: {} };
+    const updatedDayData = { ...dayRecord, note };
 
-    setRecords(prev => {
-      updatedDayData = { ...(prev[dateStr] || { subjects: {} }), note };
-      return { ...prev, [dateStr]: updatedDayData };
-    });
+    setRecords(prev => ({ ...prev, [dateStr]: updatedDayData }));
 
-    // เซฟหมายเหตุรายวันขึ้น Firebase แบบปลอดภัย
-    if (updatedDayData) {
-      try {
-        const docRef = doc(db, "homeworkData", "main");
-        await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
-      } catch (err) {
-        console.error("Firebase Note Update Error:", err);
-      }
+    try {
+      const docRef = doc(db, "homeworkData", "main");
+      await setDoc(docRef, { records: { [dateStr]: updatedDayData } }, { merge: true });
+    } catch (err) {
+      console.error("Firebase updateDailyNote error:", err);
     }
   };
 
   const handleDateOffset = (offset) => {
-    const parts = selectedDateStr.split('-');
-    const d = new Date(parts[0], parts[1] - 1, parts[2]);
+    const d = new Date(selectedDateStr);
     d.setDate(d.getDate() + offset);
-    
     if (d.getDay() === 0) d.setDate(d.getDate() + (offset > 0 ? 1 : -2));
     if (d.getDay() === 6) d.setDate(d.getDate() + (offset > 0 ? 2 : -1));
-    
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const dayStr = String(d.getDate()).padStart(2, '0');
-    
     setSelectedDateStr(`${year}-${month}-${dayStr}`);
     setSelectedDayOfWeek(d.getDay());
   };
@@ -319,68 +300,8 @@ export default function HomeworkTracker() {
   if (!isMounted) return null;
 
   // ==========================================
-  // RENDER FUNCTIONS (ฟังก์ชันแสดงผลแก้ปัญหากระตุก)
+  // RENDER FUNCTIONS
   // ==========================================
-
-  if (currentView === 'login') {
-    if (pendingPwdUser) {
-      return (
-        <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-          <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-            <div className="text-center mb-6">
-              <Shield className="mx-auto text-orange-500 mb-4" size={48} />
-              <h2 className="text-xl font-bold text-slate-800 dark:text-white">บังคับเปลี่ยนรหัสผ่าน</h2>
-              <p className="text-sm text-slate-500 mt-2">แอดมินได้รีเซ็ตรหัสผ่านของคุณ กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย</p>
-            </div>
-            <form onSubmit={handleForcePasswordChange} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">รหัสผ่านใหม่</label>
-                <input name="newPassword" type="password" required minLength="6" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="อย่างน้อย 6 ตัวอักษร" />
-              </div>
-              <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2.5 rounded-lg transition-colors">บันทึกรหัสผ่านและเข้าสู่ระบบ</button>
-              <button type="button" onClick={() => setPendingPwdUser(null)} className="w-full text-slate-500 hover:underline text-sm mt-2">ยกเลิก</button>
-            </form>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
-        <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-          <div className="text-center mb-8">
-            <div className="bg-blue-100 text-blue-600 p-3 rounded-full inline-block mb-4"><BookOpen size={32} /></div>
-            <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">Class Homework Tracker</h1>
-            <p className="text-sm mt-2 opacity-70">ระบบจดการบ้านห้องเรียน 2/10</p>
-          </div>
-          
-          <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.username.value, e.target.password.value); }} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">ชื่อผู้ใช้งาน</label>
-              <input name="username" type="text" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Username" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">รหัสผ่าน</label>
-              <input name="password" type="password" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Password" />
-            </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors">
-              เข้าสู่ระบบ
-            </button>
-          </form>
-          
-          <div className="mt-6 text-center">
-            <p className="text-sm opacity-70 mb-4">หรือ</p>
-            <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
-              เข้าชมในฐานะนักเรียน (Guest) &rarr;
-            </button>
-            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
-              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const renderDateNavigator = () => (
     <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1.5 rounded-xl shadow-sm border border-blue-200 dark:border-blue-900/50 w-full md:w-auto justify-center">
@@ -457,6 +378,7 @@ export default function HomeworkTracker() {
             <button onClick={() => setCurrentView('login')} className="flex items-center gap-3 w-full p-3 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 transition-colors text-sm font-medium"><LogOut size={20} className="rotate-180" /> เข้าสู่ระบบ</button>
           )}
 
+          {/* เครดิตผู้พัฒนา */}
           <div className="mt-6 text-center">
             <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium leading-relaxed">
               ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์
@@ -472,6 +394,66 @@ export default function HomeworkTracker() {
       </main>
     </div>
   );
+
+  if (currentView === 'login') {
+    if (pendingPwdUser) {
+      return (
+        <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
+          <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+            <div className="text-center mb-6">
+              <Shield className="mx-auto text-orange-500 mb-4" size={48} />
+              <h2 className="text-xl font-bold text-slate-800 dark:text-white">บังคับเปลี่ยนรหัสผ่าน</h2>
+              <p className="text-sm text-slate-500 mt-2">แอดมินได้รีเซ็ตรหัสผ่านของคุณ กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย</p>
+            </div>
+            <form onSubmit={handleForcePasswordChange} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">รหัสผ่านใหม่</label>
+                <input name="newPassword" type="password" required minLength="6" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="อย่างน้อย 6 ตัวอักษร" />
+              </div>
+              <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-medium py-2.5 rounded-lg transition-colors">บันทึกรหัสผ่านและเข้าสู่ระบบ</button>
+              <button type="button" onClick={() => setPendingPwdUser(null)} className="w-full text-slate-500 hover:underline text-sm mt-2">ยกเลิก</button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-blue-50 text-slate-800'} p-4`}>
+        <div className={`max-w-md w-full p-8 rounded-2xl shadow-xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+          <div className="text-center mb-8">
+            <div className="bg-blue-100 text-blue-600 p-3 rounded-full inline-block mb-4"><BookOpen size={32} /></div>
+            <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">Class Homework Tracker</h1>
+            <p className="text-sm mt-2 opacity-70">ระบบจดการบ้านห้องเรียน 2/10</p>
+          </div>
+          
+          <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.username.value, e.target.password.value); }} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">ชื่อผู้ใช้งาน</label>
+              <input name="username" type="text" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Username" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">รหัสผ่าน</label>
+              <input name="password" type="password" required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:border-slate-600 outline-none" placeholder="Password" />
+            </div>
+            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors">
+              เข้าสู่ระบบ
+            </button>
+          </form>
+          
+          <div className="mt-6 text-center">
+            <p className="text-sm opacity-70 mb-4">หรือ</p>
+            <button onClick={() => { setCurrentUser(null); setCurrentView('dashboard'); }} className="text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline">
+              เข้าชมในฐานะนักเรียน (Guest) &rarr;
+            </button>
+            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700">
+              <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">ออกแบบและพัฒนาโดย<br/>ด.ญ.กุลรดา รังสิยานนท์</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const renderDashboardView = () => {
     const todayInfo = getThaiDateInfo();
@@ -585,7 +567,7 @@ export default function HomeworkTracker() {
     const currentSchedule = SCHEDULE[selectedDayOfWeek] || [];
 
     const handleSave = () => {
-      alert("ระบบได้บันทึกข้อมูลทุกครั้งที่ติ๊ก/พิมพ์ให้อัตโนมัติบน Cloud แล้วครับ! ✅");
+      alert("ระบบได้บันทึกข้อมูลทุกครั้งที่ติ๊ก/พิมพ์ให้อัตโนมัติแล้วครับ! ✅");
     };
 
     return (
@@ -593,7 +575,7 @@ export default function HomeworkTracker() {
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">ตารางเรียน & การบ้าน</h1>
-            <p className="text-slate-500 dark:text-slate-400">ระบบบันทึกอัตโนมัติ (Auto-Save)</p>
+            <p className="text-slate-500 dark:text-slate-400">ดูและจัดการข้อมูลของแต่ละวัน</p>
           </div>
           {renderDateNavigator()}
         </header>
